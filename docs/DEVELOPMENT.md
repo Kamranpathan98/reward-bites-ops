@@ -231,3 +231,15 @@ delivery, subscription billing, or production deployment. Also not built
 this gate: full `platform_admin` JWT authentication (`POST
 /platform/auth/login`) — see `docs/IMPLEMENTATION_STATUS.md`. See the
 Implementation Blueprint's gate list (section 20) for what's next.
+
+### Git Commit Authorship Rule
+
+> AI-assisted development must not add co-author trailers or AI
+> attribution to Git commits. Commits must contain only the configured
+> human Git author and the intended commit message.
+
+### CI Integrity Rule
+
+> PostgreSQL migrations, RLS coverage, tenant-context verification, and
+> security tests must remain blocking CI checks. They must not be
+> disabled, skipped, or made non-blocking merely to obtain a green build.
