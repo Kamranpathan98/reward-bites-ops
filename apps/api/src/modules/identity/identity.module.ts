@@ -33,6 +33,9 @@ import { UsersService } from './users.service';
     RefreshTokenRepository,
     LoginAttemptRepository,
   ],
-  exports: [UserRepository, MembershipRepository, RoleRepository],
+  // AuthService exported for the platform module's SignupService, which
+  // reuses AuthService.login() verbatim for signup auto-login rather than
+  // issuing tokens a second, different way (onboarding task section 7).
+  exports: [UserRepository, MembershipRepository, RoleRepository, AuthService],
 })
 export class IdentityModule {}

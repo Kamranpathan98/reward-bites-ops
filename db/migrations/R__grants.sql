@@ -151,3 +151,16 @@ BEGIN
   END IF;
 END
 $$;
+
+-- Onboarding (docs/IMPLEMENTATION_STATUS.md "Onboarding" section):
+-- POST /auth/signup's abuse counter lives in public_rate_limit, checked and
+-- incremented through the same app_platform pool the signup provisioning
+-- transaction already uses. No tenant_id, so no RLS applies (see the
+-- table's own migration comment) — a plain grant is the whole story.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'public_rate_limit') THEN
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE ON public.public_rate_limit TO app_platform';
+  END IF;
+END
+$$;

@@ -28,15 +28,14 @@ describe('App routing shell', () => {
     );
   });
 
-  it('redirects "/" to the login screen and renders the real login form', async () => {
+  it('renders the public landing page at "/" with entry points to signup and login', async () => {
     renderApp('/');
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Sign in to RewardBite' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'RewardBite' })).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Email')).toBeInTheDocument();
-    expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Get Started' })).toHaveAttribute('href', '/signup');
+    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/app/login');
   });
 
   it('redirects an unknown path to login too', async () => {

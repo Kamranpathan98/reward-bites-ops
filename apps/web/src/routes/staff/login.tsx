@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { loginRequestSchema, type LoginRequest } from '@rewardbite/contracts';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -87,6 +87,13 @@ export function LoginPage(): JSX.Element {
             <Button type="submit" disabled={loginMutation.isPending}>
               {loginMutation.isPending ? 'Signing in…' : 'Sign in'}
             </Button>
+
+            <p className="text-center text-sm text-muted-foreground">
+              New to RewardBite?{' '}
+              <Link to="/signup" className="font-medium text-primary underline">
+                Create a restaurant account
+              </Link>
+            </p>
           </form>
         </CardContent>
       </Card>

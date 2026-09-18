@@ -500,6 +500,7 @@ Auth column: **P** = public token, **T** = tenant JWT (+ permission in brackets)
 | Module | Method + path | Auth | Purpose, request → response, validation |
 | --- | --- | --- | --- |
 | auth | `POST /auth/login` | — | `{email, password}` → `{accessToken, memberships[]}` + refresh cookie; if one membership, token is tenant-bound; rate limited |
+| auth | `POST /auth/signup` | — | Self-service onboarding (added post-Gate-6, see below). `{tenantName, ownerName, email, password, passwordConfirmation}` → same shape as login (auto-login); server generates the slug; rate limited |
 | auth | `POST /auth/select-tenant` | T (any) | `{membershipId}` → new access token bound to that tenant |
 | auth | `POST /auth/refresh` | cookie | rotates refresh, returns access token; reuse → revoke family |
 | auth | `POST /auth/logout` | cookie | revokes family |
@@ -554,6 +555,61 @@ Auth column: **P** = public token, **T** = tenant JWT (+ permission in brackets)
 | platform | `PATCH /platform/tenants/:id/status` | PL | ACTIVE / SUSPENDED |
 | platform | `GET /platform/health` | PL | tenant count, DB latency |
 | ops | `GET /health`, `GET /health/db` | — | liveness / readiness |
+
+### Self-service onboarding (added post-Gate-6)
+
+This architecture originally had no self-service restaurant signup —
+tenant provisioning was `POST /platform/tenants` only, an ops-triggered
+action gated by a bootstrap secret (section 5 stand-in for the not-yet-
+built `platform_admin` JWT). Adding a public "create your own restaurant"
+flow required reconciling it against that existing boundary rather than
+inventing a parallel one:
+
+- **Endpoint**: `POST /auth/signup`, public, under the `/auth` prefix
+  (same trust class as login, not `/platform/*`).
+- **Provisioning boundary**: reuses `PlatformService.provisionTenant()` —
+  the exact one-transaction write `POST /platform/tenants` already uses —
+  through the same `app_platform` DB role. No new DB role was introduced:
+  `app_platform`'s grants are already scoped to exactly `tenant,
+  tenant_settings, role, role_permission, tenant_membership, user` (plus
+  read-only `permission` and append-only `audit_event`) and structurally
+  cannot touch orders/bills/menu/tables/payments regardless of what calls
+  it. The signup request body has no `tenantId`/`roleId`/status field for
+  the same reason `POST /platform/tenants` doesn't need one validated
+  against an attacker: there is nothing in the contract to inject.
+  `provisionTenant()` gained one additive option,
+  `allowExistingOwner` (default `true`, preserving `POST
+  /platform/tenants`'s exact original behavior), which signup sets to
+  `false` so it can never silently attach a new tenant to an existing
+  platform user or reset their password.
+- **Atomicity**: unchanged — still one `withTenantTx` transaction; any
+  failure (including a genuine concurrent unique-constraint race on the
+  owner's email or the generated slug) rolls back the whole tenant/
+  settings/roles/role_permission/membership/audit write, never a partial
+  one.
+- **Auto-login**: signup calls `AuthService.login()` — the exact function
+  `POST /auth/login` uses — immediately after provisioning commits, using
+  the credentials just submitted. No second token-issuance path exists.
+- **No email verification in V1**: signup is `email + password → account
+  created → auto-login`, deliberately. No SMTP/email-provider/
+  verification-token/queue is introduced.
+- **Abuse protection**: a Postgres-backed counter (`public_rate_limit` —
+  pulled forward from its originally-planned Public Ordering use, same
+  `key, window_start, count` shape) keyed per IP, checked in a Guard
+  (before Zod validation, so malformed-payload floods count too). This is
+  the V1 application-level layer only — genuinely shared across API
+  instances (not an in-process counter), but not a substitute for the
+  Cloudflare rate rule this architecture already specifies for `/auth/*`.
+- **Tenant slug**: never client-supplied. Generated server-side from
+  `tenantName` (lowercased, non-alphanumeric runs collapsed to `-`);
+  collisions get a deterministic `-2`, `-3`, ... suffix, retried against
+  the real `tenant_slug_unique` constraint (not guessed at with a
+  separate SELECT) so genuinely concurrent identical-name signups still
+  each get a unique slug.
+- **First-time setup**: `/app/setup` guides the new owner to create their
+  first table via the existing Gate 4 `POST /tables` endpoint — no new
+  table/menu business logic. Setup "complete" is derived from whether at
+  least one table exists, not a new persistence flag.
 
 ### Future API boundaries (reserved, not built)
 

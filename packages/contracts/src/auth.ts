@@ -21,6 +21,29 @@ export const loginResponseSchema = z.object({
 });
 export type LoginResponse = z.infer<typeof loginResponseSchema>;
 
+export const signupRequestSchema = z
+  .object({
+    // .trim() before .min(1) so a whitespace-only value (length >= 1 raw,
+    // 0 trimmed) is rejected rather than silently creating a blank-looking
+    // restaurant/owner name (red-team review finding).
+    tenantName: z.string().trim().min(1).max(120),
+    ownerName: z.string().trim().min(1).max(120),
+    email: z.string().email(),
+    password: z.string().min(10),
+    passwordConfirmation: z.string().min(10),
+  })
+  .refine((data) => data.password === data.passwordConfirmation, {
+    message: 'Passwords do not match.',
+    path: ['passwordConfirmation'],
+  });
+export type SignupRequest = z.infer<typeof signupRequestSchema>;
+
+// Signup always provisions exactly one new tenant + owner membership and
+// auto-logs the owner in, so the response is identical in shape to a
+// single-membership login response — reused, not duplicated.
+export const signupResponseSchema = loginResponseSchema;
+export type SignupResponse = LoginResponse;
+
 export const selectTenantRequestSchema = z.object({
   membershipId: z.string().uuid(),
 });

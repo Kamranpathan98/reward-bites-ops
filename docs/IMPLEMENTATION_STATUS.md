@@ -1,7 +1,8 @@
 # Implementation Status
 
-Current Gate: Gate 6 (Orders)
-Status: COMPLETE — live-verified against a real PostgreSQL 17 instance
+Current Gate: Gate 6 (Orders) + Self-Service Onboarding
+Status: COMPLETE — live-verified against a real PostgreSQL 17 instance.
+Gate 7 (Kitchen) remains explicitly blocked pending onboarding review.
 
 This file is updated at the end of every gate. See the Implementation
 Blueprint (section 20, "Implementation Gates") for the full gate list and
@@ -642,3 +643,215 @@ a code-review claim).
   selection is not exposed in the UI (the API and backend fully support
   it, verified in `gate6-orders-vertical.integration.spec.ts`'s first
   test) — a presentation-layer scope cut, not a capability gap.
+
+---
+
+## Self-Service Onboarding — built and live-verified (Gate 7 paused for this)
+
+Scope: a new foundational product flow — public landing → signup → auto-
+login → first-time setup → dashboard — reconciled against the existing
+architecture rather than invented from scratch. Gate 7 (Kitchen) and all
+later gates (Billing, Payments, Public Ordering) remain untouched and
+blocked, per explicit instruction, pending review of this work.
+
+### Product flow implemented
+
+```
+/  (public landing)
+  -> Get Started -> /signup
+       -> POST /auth/signup (provision tenant + owner, auto-login)
+       -> /app/setup (create first table, reuses Gate 4's POST /tables)
+       -> /app (existing dashboard placeholder)
+
+  -> Sign in -> /app/login (unchanged) -> POST /auth/login -> /app or
+     /app/select-tenant (unchanged)
+```
+
+### Architecture decision
+
+Full rationale is in `restaurant-saas-v1-architecture.md`'s new
+"Self-service onboarding (added post-Gate-6)" subsection (API reference,
+section 12) — not duplicated here. Summary: **Option A** from the task
+brief — reuse the existing `PlatformService.provisionTenant()` transaction
+and the existing `app_platform` DB role through a narrowly-scoped new
+public entry point, rather than introducing a second DB role or a second
+provisioning code path. `app_platform`'s grants were already exactly
+`tenant, tenant_settings, role, role_permission, tenant_membership, user`
+(+ read-only `permission`, append-only `audit_event`) before this work —
+verified by reading `R__grants.sql` before writing any code — so the
+security boundary the task asked for already existed; it only needed a
+public, request-shape-constrained door onto it.
+
+`provisionTenant()` gained one additive parameter,
+`{ ownerName?, allowExistingOwner? }`, both optional and defaulting to the
+exact original behavior — `POST /platform/tenants` is unchanged in every
+respect (same contract, same behavior, same tests still passing). Signup
+passes `ownerName` (a real field it has and the platform contract
+doesn't) and `allowExistingOwner: false` (so it can never silently attach
+a new tenant to an existing platform user, per task section 10).
+
+### Endpoint
+
+`POST /auth/signup` — public, no guard other than `SignupRateLimitGuard`.
+Request: `{tenantName, ownerName, email, password, passwordConfirmation}`
+(Zod-validated, password confirmation checked via `.refine()`). Response:
+identical shape to `POST /auth/login`'s (`{accessToken, memberships[]}`)
+— literally `signupResponseSchema = loginResponseSchema` in the contracts
+package, since signup always produces exactly the single-membership case
+login already special-cases into a tenant-bound token. Refresh token in
+the same `HttpOnly; Secure; SameSite=Strict; Path=/auth` cookie
+`setRefreshCookie()` already sets for login.
+
+### Files changed
+
+**DB**: `db/migrations/V202609190900__onboarding_rate_limit.sql` (new —
+`public_rate_limit` table, pulled forward from its originally-planned
+Public Ordering slot), `R__grants.sql` (one new `app_platform` grant on
+that table).
+
+**Backend**: `apps/api/src/modules/platform/signup.controller.ts`,
+`signup.service.ts`, `signup-rate-limit.guard.ts`,
+`public-rate-limit.repository.ts`, `tenant-slug.ts` (+
+`tenant-slug.spec.ts`) — all new. `platform.service.ts` (additive
+`provisionTenant()` options parameter, new exported
+`TenantSlugConflictError`), `platform.module.ts` (registers the new
+controller/service/guard/repository), `identity.module.ts` (exports
+`AuthService` so the platform module can reuse it),
+`common/config/env.schema.ts` (`SIGNUP_RATE_LIMIT_MAX_ATTEMPTS`/
+`_WINDOW_MINUTES`, defaulting to 5/15 — same pattern as the existing
+`LOGIN_LOCKOUT_THRESHOLD`).
+
+**Contracts**: `packages/contracts/src/auth.ts` (`signupRequestSchema`,
+`signupResponseSchema`), `index.ts` (exports).
+
+**Tests**: `apps/api/src/modules/platform/tenant-slug.spec.ts` (unit, 8
+tests), `apps/api/test/db/gate7-signup-vertical.integration.spec.ts`,
+`gate7-signup-attack-matrix.integration.spec.ts`,
+`gate7-signup-concurrency.integration.spec.ts`,
+`gate7-signup-rate-limit.integration.spec.ts` (16 DB integration tests
+total).
+
+**Frontend**: `apps/web/src/routes/public/landing.tsx` (+ test),
+`signup.tsx` (+ test), `apps/web/src/routes/staff/setup.tsx` (+ test),
+`apps/web/src/features/auth/use-auth.ts` (`useSignup`), `App.tsx` (new
+`/`, `/signup`, `/app/setup` routes), `login.tsx` (link to signup),
+`App.test.tsx` (updated: `/` now renders the landing page, not a
+redirect — the old assertion described the pre-onboarding placeholder
+behavior, not a regression).
+
+**Docs**: `restaurant-saas-v1-architecture.md` (new API row + new
+subsection, both minimal, nothing else touched), this file.
+
+### Database
+
+- `public_rate_limit(key TEXT PRIMARY KEY, window_start TIMESTAMPTZ,
+count INT)` — no `tenant_id`, so (like `login_attempt`/
+  `platform_admin`) it is correctly NOT picked up by the dynamic
+  `R__rls_policies.sql` scan; RLS doesn't apply to a table with no tenant
+  to isolate by.
+- `app_platform` grant: `SELECT, INSERT, UPDATE` on `public_rate_limit`
+  only (no `DELETE` — pruning is a separate cron concern, matching the
+  architecture's own note for this table; verified live that a test
+  attempting `DELETE` as `app_platform` is correctly rejected with
+  "permission denied").
+- No RLS policy changed. No table's grants were widened beyond this one
+  addition. `app_rw`/`app_public` grants are completely untouched.
+
+### Verification
+
+- Contracts: **29/29**
+- Backend non-DB: **81/81** (includes the new 8-test `tenant-slug.spec.ts`)
+- Backend DB integration: **131/131** (17 suites — the 16 new Gate 7
+  onboarding tests plus all 115 pre-existing Gate 1-6 tests, run against
+  both a genuinely fresh database and the existing upgraded
+  `rewardbite_dev`, identical pass counts both times)
+- Frontend: **52/52** (10 new tests across landing/signup/setup pages)
+- Build: **PASS**
+- Lint: **PASS**
+- Format: **PASS**
+- RLS coverage: **0 violations** (18 tenant tables — unchanged count;
+  `public_rate_limit` correctly excluded)
+- Fresh DB: **PASS** (15 migrations applied cleanly from an empty
+  database, 0 RLS violations, full 131-test DB suite green)
+- Upgrade DB: **PASS** (migration applied cleanly on top of the existing
+  Gate 1-6 schema, full 131-test DB suite green)
+
+### Security tests (task section 22, Attacks A-J)
+
+All executed live against real Postgres/HTTP. A: client-supplied
+`tenantId` ignored. B: client-supplied `roleId` ignored, owner still gets
+the real Owner role. C: signup payload cannot target a membership in an
+existing (seeded) tenant. D: signup cannot modify/reuse an existing
+tenant's slug (collision suffix instead). E: existing-email signup safely
+rejected (409), not silently attached. F: 10 concurrent signups for the
+same email -> exactly 1 succeeds (see Concurrent signup below). G:
+forced mid-transaction failure -> zero orphan rows (see Rollback below).
+H: unauthenticated `/auth/signup` returns exactly `{accessToken,
+memberships}`, nothing else. I: a signup-created owner token gets 401
+against `POST /platform/tenants` (`PlatformBootstrapGuard` needs the
+bootstrap secret header, which a tenant JWT can never satisfy). J: the
+platform bootstrap secret cannot be used as a tenant Bearer token (401
+from `AuthGuard`).
+
+### Concurrent signup (task section 23)
+
+10 concurrent signups for the _same email_ -> exactly 1 `200`, 9 `409`;
+exactly 1 `user` row and 1 `tenant_membership` row exist afterward. This
+required a real fix during development: the first application-level
+pre-check (`findByEmail`) is a plain SELECT, not a lock, so two truly
+concurrent requests can both pass it before either commits — the second
+one previously surfaced the raw `user_email_unique` violation as an
+unhandled 500. Fixed by catching that specific constraint violation and
+mapping it to the same safe 409 the common-case pre-check already
+throws — the database is the final arbiter, exactly as required. 8
+concurrent signups for the _same restaurant name_ (different emails) all
+succeed with 8 distinct, collision-free slugs, verified both via the HTTP
+responses and a direct `tenant` table count.
+
+### Rollback tests (task section 24)
+
+A realistic mid-transaction failure (second signup attempt with an
+already-taken email, which throws only after `tenant`/`tenant_settings`/
+4 `role` rows/~35 `role_permission` rows have already been written inside
+the same transaction) leaves zero orphan `tenant` rows — verified by
+direct SQL. Produced by real application logic reaching a real failure
+point partway through, not an injected test-only fault.
+
+### Existing Gate 1-6 regression
+
+**All green, unchanged.** `POST /platform/tenants` (Gate 2) was not
+touched behaviorally in any way — same contract, same response, same
+error on slug conflict (now a named `TenantSlugConflictError` subclass of
+`ConflictException`, but same status/message, so no observable change).
+Gates 3-6 DB integration tests all still pass at their original counts.
+
+### Architecture drift
+
+**PASS** — no Redis/message broker/CAPTCHA added (task explicitly
+forbade all three); no new DB role; no RLS weakened or bypassed; the rate
+limiter is honestly documented as a V1 application-level layer, not
+claimed as distributed edge protection; no Kitchen/Billing/Payments/
+Public-Ordering code exists anywhere in this change.
+
+### Non-blocking notes
+
+- Two real bugs were found and fixed only by running against a live
+  database (neither catchable by static review): (1) the slug-collision
+  retry loop didn't originally catch `provisionTenant()`'s own pre-check
+  `ConflictException` (only the raw DB constraint violation), so the
+  common non-racy collision case failed instead of retrying — fixed by
+  giving that specific exception its own subclass,
+  `TenantSlugConflictError`, so the retry logic can distinguish it from
+  the (must-not-retry) email conflict without string-matching. (2) raw
+  test-assertion queries against `tenant`/`tenant_membership` need
+  `app.actor_kind`/`app.user_id` context set (RLS applies to `app_platform`
+  too) — fixed by routing them through `withGlobalTx`, the same
+  established pattern `rls-tenant-membership.integration.spec.ts` already
+  uses for exactly this reason.
+- The rate-limit check originally lived in `SignupService`, which runs
+  _after_ Zod validation — meaning a malformed-payload flood would have
+  bypassed it entirely. Moved to a Guard (`SignupRateLimitGuard`), which
+  Nest's pipeline runs _before_ pipes, closing that gap.
+- `/app/setup` is intentionally minimal (one step: first table) per the
+  task's explicit "do not build a giant wizard" instruction — it does not
+  prompt for menu items, staff invites, or settings.

@@ -48,6 +48,12 @@ export const envSchema = z.object({
 
   ARGON2_MEMORY_KB: z.coerce.number().int().positive().default(65536),
   LOGIN_LOCKOUT_THRESHOLD: z.coerce.number().int().positive().default(5),
+  // Self-service signup abuse throttle (onboarding task section 12) —
+  // same per-IP-window shape as LOGIN_LOCKOUT_THRESHOLD above, configurable
+  // for the same reason: the DB integration suite exercises many signups
+  // from one loopback IP and would otherwise trip its own rate limit.
+  SIGNUP_RATE_LIMIT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  SIGNUP_RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
 
   FEATURE_KITCHEN_DISPLAY: z.coerce.boolean().default(false),
 });

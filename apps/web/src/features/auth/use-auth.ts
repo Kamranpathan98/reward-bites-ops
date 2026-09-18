@@ -4,6 +4,8 @@ import type {
   LoginResponse,
   MeResponse,
   SelectTenantResponse,
+  SignupRequest,
+  SignupResponse,
 } from '@rewardbite/contracts';
 import { apiFetch } from '@/lib/api-client';
 import { useAuthContext } from './auth-context';
@@ -15,6 +17,18 @@ export function useLogin() {
   return useMutation({
     mutationFn: (body: LoginRequest) =>
       apiFetch<LoginResponse>('/auth/login', { method: 'POST', body }),
+    onSuccess: (data) => setAccessToken(data.accessToken),
+  });
+}
+
+// Signup auto-logs the owner in (POST /auth/signup returns the exact same
+// shape as login — one new tenant, one new membership) — reuses the same
+// in-memory access-token wiring as useLogin, never a second auth path.
+export function useSignup() {
+  const { setAccessToken } = useAuthContext();
+  return useMutation({
+    mutationFn: (body: SignupRequest) =>
+      apiFetch<SignupResponse>('/auth/signup', { method: 'POST', body }),
     onSuccess: (data) => setAccessToken(data.accessToken),
   });
 }

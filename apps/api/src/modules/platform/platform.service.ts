@@ -11,6 +11,21 @@ import { recordAuditEvent } from '../audit/audit-writer';
 import { PLATFORM_DB_POOL } from './platform-db.module';
 import { SYSTEM_ROLE_TEMPLATES } from './system-role-templates';
 
+/**
+ * A `ConflictException` subtype specifically for the slug pre-check below
+ * — same 409 status, same message, same behavior for the existing
+ * `POST /platform/tenants` caller, but `instanceof`-distinguishable from
+ * the owner-email conflict a few lines later. `SignupService` needs that
+ * distinction: a slug conflict is retry-worthy (try the next candidate
+ * slug), an email conflict must propagate immediately (onboarding task
+ * section 10) — string-matching the message would be fragile.
+ */
+export class TenantSlugConflictError extends ConflictException {
+  constructor() {
+    super('A tenant with this slug already exists.');
+  }
+}
+
 @Injectable()
 export class PlatformService {
   constructor(
@@ -28,14 +43,32 @@ export class PlatformService {
    * what lets this whole transaction run through `withTenantTx` with that
    * id as the tenant context from the very first statement, satisfying
    * every table's WITH CHECK policy including `tenant` itself.
+   *
+   * `options` is additive for self-service signup (SignupService) — every
+   * existing caller (`PlatformController.createTenant`, i.e.
+   * `POST /platform/tenants`) omits it and gets byte-for-byte the same
+   * behavior as before this parameter existed:
+   *  - `ownerName`: platform-admin-initiated creation has no owner-name
+   *    field in its contract, so it still falls back to the email's local
+   *    part; signup has a real name field and passes it here.
+   *  - `allowExistingOwner` (default `true`, matching the original
+   *    behavior): platform-admin creation may legitimately attach an
+   *    already-registered platform user to a brand-new tenant. Public
+   *    signup must never do that silently (onboarding task section 10) —
+   *    it passes `false`, which turns the "user already exists" branch
+   *    into a thrown conflict instead of a silent reuse.
    */
-  async provisionTenant(input: CreateTenantRequest): Promise<{ tenantId: string }> {
+  async provisionTenant(
+    input: CreateTenantRequest,
+    options?: { readonly ownerName?: string; readonly allowExistingOwner?: boolean },
+  ): Promise<{ tenantId: string }> {
+    const allowExistingOwner = options?.allowExistingOwner ?? true;
     const tenantId = newId();
 
     await withTenantTx(this.pool, { tenantId, actorKind: 'platform' }, async (tx) => {
       const existingSlug = await this.tenantRepository.findBySlug(tx, input.slug);
       if (existingSlug) {
-        throw new ConflictException('A tenant with this slug already exists.');
+        throw new TenantSlugConflictError();
       }
 
       await this.tenantRepository.create(tx, { id: tenantId, name: input.name, slug: input.slug });
@@ -57,12 +90,16 @@ export class PlatformService {
         throw new Error('Owner role template is missing from SYSTEM_ROLE_TEMPLATES');
 
       let owner = await this.userRepository.findByEmail(tx, input.ownerEmail);
+      if (owner && !allowExistingOwner) {
+        throw new ConflictException('An account with this email already exists.');
+      }
       if (!owner) {
         const passwordHash = await hashPassword(input.ownerPassword);
         // The architecture's POST /platform/tenants body has no owner
         // display name field — falling back to the email's local part is
         // a reasonable placeholder until the owner sets their own name.
-        const fallbackName = input.ownerEmail.split('@')[0] ?? input.ownerEmail;
+        const fallbackName =
+          options?.ownerName ?? input.ownerEmail.split('@')[0] ?? input.ownerEmail;
         owner = await this.userRepository.create(tx, {
           email: input.ownerEmail,
           passwordHash,
