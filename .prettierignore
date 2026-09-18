@@ -1,0 +1,15 @@
+node_modules
+dist
+build
+coverage
+.turbo
+apps/web/dist
+apps/api/dist
+package-lock.json
+db/migrations/*.sql
+db/seed/**
+
+# Locked source-of-truth documents — content/formatting owned by the user,
+# never reformatted by this repo's tooling.
+restaurant-saas-v1-architecture.md
+rewardbite-implementation-blueprint.md

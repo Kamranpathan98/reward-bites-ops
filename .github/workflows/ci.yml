@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  quality:
+    name: install / lint / format / build / unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (includes module-boundary no-restricted-imports rule)
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format
+
+      - name: Build (contracts -> api -> web)
+        run: npm run build
+
+      - name: Contracts unit tests
+        run: npm run test:contracts
+
+      - name: Backend unit/e2e tests (no DB required)
+        run: npm run test:api
+
+      - name: Frontend unit tests
+        run: npm run test:web
+
+  database:
+    name: PostgreSQL migrations + RLS coverage + tenant-context test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rewardbite
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGDATABASE: rewardbite
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      APP_MIGRATOR_PASSWORD: ci_migrator_pw
+      APP_RW_PASSWORD: ci_rw_pw
+      APP_PUBLIC_PASSWORD: ci_public_pw
+      APP_PLATFORM_PASSWORD: ci_platform_pw
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Flyway CLI
+        run: |
+          curl -sL -o flyway.tar.gz \
+            https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/10.21.0/flyway-commandline-10.21.0-linux-x64.tar.gz
+          tar -xzf flyway.tar.gz
+          echo "$PWD/flyway-10.21.0" >> "$GITHUB_PATH"
+
+      - name: Wait for Postgres
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
+        env:
+          PGPASSWORD: postgres
+
+      - name: db-init.sql (create app_migrator / app_rw / app_public / app_platform)
+        run: node scripts/db-init.mjs
+
+      - name: Flyway migrate (empty DB -> Sprint 1 migrations)
+        run: npm run db:migrate
+        env:
+          FLYWAY_URL: jdbc:postgresql://localhost:5432/rewardbite
+          FLYWAY_USER: app_migrator
+          FLYWAY_PASSWORD: ${{ env.APP_MIGRATOR_PASSWORD }}
+
+      - name: RLS coverage check (runs as the CI superuser role, per blueprint section 7)
+        run: node scripts/rls-coverage-check.mjs
+        env:
+          RLS_CHECK_DATABASE_URL: postgres://postgres:postgres@localhost:5432/rewardbite
+
+      - name: Gate 1 + Gate 2 DB integration tests (withTenantTx, RLS, auth vertical journey)
+        run: npm run test:api:db
+        env:
+          TEST_DATABASE_URL: postgres://app_rw:${{ env.APP_RW_PASSWORD }}@localhost:5432/rewardbite
+          TEST_PLATFORM_DATABASE_URL: postgres://app_platform:${{ env.APP_PLATFORM_PASSWORD }}@localhost:5432/rewardbite
