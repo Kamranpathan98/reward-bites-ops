@@ -222,26 +222,38 @@ describeIfDb('RED TEAM — Gate 5 menu catalog tenant isolation', () => {
   });
 
   it('Attack F: no tenant context (unauthenticated) -> 401 on every mutating and reading endpoint', async () => {
-    const attempts = [
-      request(app.getHttpServer()).get('/api/v1/menu'),
-      request(app.getHttpServer()).post('/api/v1/menu/categories').send({ name: 'x' }),
-      request(app.getHttpServer())
-        .patch(`/api/v1/menu/categories/${categoryBId}`)
-        .send({ name: 'x' }),
-      request(app.getHttpServer()).delete(`/api/v1/menu/categories/${categoryBId}`),
-      request(app.getHttpServer())
-        .post('/api/v1/menu/items')
-        .send({ categoryId: categoryBId, name: 'x' }),
-      request(app.getHttpServer())
-        .post('/api/v1/menu/variants')
-        .send({ itemId: itemBId, name: 'x', pricePaise: 1 }),
-      request(app.getHttpServer()).post('/api/v1/menu/addons').send({ name: 'x', pricePaise: 1 }),
-      request(app.getHttpServer())
-        .post('/api/v1/menu/reorder')
-        .send({ categoryIds: [categoryBId] }),
+    // Sequential, not Promise.all: firing this many concurrent mixed
+    // GET/POST/PATCH/DELETE requests at once reproducibly triggered
+    // ECONNRESET under GitHub Actions' constrained runner (never
+    // locally) — a transport-layer artifact, not a security difference.
+    // Every other attack in this file already runs sequentially; the
+    // assertions and endpoint coverage here are unchanged, only the
+    // concurrency is.
+    const attempts: Array<() => request.Test> = [
+      () => request(app.getHttpServer()).get('/api/v1/menu'),
+      () => request(app.getHttpServer()).post('/api/v1/menu/categories').send({ name: 'x' }),
+      () =>
+        request(app.getHttpServer())
+          .patch(`/api/v1/menu/categories/${categoryBId}`)
+          .send({ name: 'x' }),
+      () => request(app.getHttpServer()).delete(`/api/v1/menu/categories/${categoryBId}`),
+      () =>
+        request(app.getHttpServer())
+          .post('/api/v1/menu/items')
+          .send({ categoryId: categoryBId, name: 'x' }),
+      () =>
+        request(app.getHttpServer())
+          .post('/api/v1/menu/variants')
+          .send({ itemId: itemBId, name: 'x', pricePaise: 1 }),
+      () =>
+        request(app.getHttpServer()).post('/api/v1/menu/addons').send({ name: 'x', pricePaise: 1 }),
+      () =>
+        request(app.getHttpServer())
+          .post('/api/v1/menu/reorder')
+          .send({ categoryIds: [categoryBId] }),
     ];
-    const results = await Promise.all(attempts);
-    for (const res of results) {
+    for (const attempt of attempts) {
+      const res = await attempt();
       expect(res.status).toBe(401);
     }
   });

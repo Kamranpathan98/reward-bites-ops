@@ -386,27 +386,38 @@ describeIfDb('RED TEAM — Gate 6 orders tenant isolation + attack matrix', () =
   });
 
   it('Attack N: unauthenticated requests to every Gate 6 endpoint -> 401', async () => {
-    const attempts = [
-      request(app.getHttpServer()).get('/api/v1/orders'),
-      request(app.getHttpServer()).get(`/api/v1/orders/${orderBId}`),
-      request(app.getHttpServer())
-        .post('/api/v1/orders')
-        .send({ idempotencyKey: randomUUID(), type: 'TAKEAWAY', lines: [] }),
-      request(app.getHttpServer())
-        .patch(`/api/v1/orders/${orderBId}/lines`)
-        .send({ expectedVersion: 0 }),
-      request(app.getHttpServer())
-        .post(`/api/v1/orders/${orderBId}/transition`)
-        .send({ to: 'ACCEPTED', expectedVersion: 0 }),
-      request(app.getHttpServer())
-        .post(`/api/v1/orders/${orderBId}/cancel`)
-        .send({ expectedVersion: 0, reason: 'x' }),
-      request(app.getHttpServer())
-        .post(`/api/v1/orders/${orderBId}/reopen`)
-        .send({ expectedVersion: 0 }),
+    // Sequential, not Promise.all: firing this many concurrent mixed
+    // GET/POST/PATCH requests at once reproducibly triggered ECONNRESET
+    // under GitHub Actions' constrained runner (never locally) — a
+    // transport-layer artifact, not a security difference. Every other
+    // attack in this file already runs sequentially; the assertions and
+    // endpoint coverage here are unchanged, only the concurrency is.
+    const attempts: Array<() => request.Test> = [
+      () => request(app.getHttpServer()).get('/api/v1/orders'),
+      () => request(app.getHttpServer()).get(`/api/v1/orders/${orderBId}`),
+      () =>
+        request(app.getHttpServer())
+          .post('/api/v1/orders')
+          .send({ idempotencyKey: randomUUID(), type: 'TAKEAWAY', lines: [] }),
+      () =>
+        request(app.getHttpServer())
+          .patch(`/api/v1/orders/${orderBId}/lines`)
+          .send({ expectedVersion: 0 }),
+      () =>
+        request(app.getHttpServer())
+          .post(`/api/v1/orders/${orderBId}/transition`)
+          .send({ to: 'ACCEPTED', expectedVersion: 0 }),
+      () =>
+        request(app.getHttpServer())
+          .post(`/api/v1/orders/${orderBId}/cancel`)
+          .send({ expectedVersion: 0, reason: 'x' }),
+      () =>
+        request(app.getHttpServer())
+          .post(`/api/v1/orders/${orderBId}/reopen`)
+          .send({ expectedVersion: 0 }),
     ];
-    const results = await Promise.all(attempts);
-    for (const res of results) {
+    for (const attempt of attempts) {
+      const res = await attempt();
       expect(res.status).toBe(401);
     }
   });
