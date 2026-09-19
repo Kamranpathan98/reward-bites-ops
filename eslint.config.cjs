@@ -89,6 +89,7 @@ module.exports = tseslint.config(
       '**/node_modules/**',
       '**/.turbo/**',
       'apps/web/dist/**',
+      '.agents/**',
     ],
   },
   js.configs.recommended,

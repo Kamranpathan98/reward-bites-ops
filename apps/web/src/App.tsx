@@ -14,6 +14,8 @@ import { DesignSystemShowcase } from '@/routes/staff/design-system-showcase';
 import { LandingPage } from '@/routes/public/landing';
 import { SignupPage } from '@/routes/public/signup';
 import { ProtectedRoute } from '@/features/auth/protected-route';
+import { KitchenLayout } from '@/routes/staff/kitchen/kitchen-layout';
+import { KitchenPage } from '@/routes/staff/kitchen/kitchen-page';
 
 /**
  * Gate 3 (login, tenant selection, users) + Gate 4 (tables, QR sheet) +
@@ -59,6 +61,10 @@ export function App(): JSX.Element {
           <Route path="orders" element={<OrdersPage />} />
           <Route path="orders/:id" element={<OrderDetailPage />} />
           <Route path="design-system" element={<DesignSystemShowcase />} />
+        </Route>
+        {/* Dedicated full-screen KDS canvas outside standard AppShell */}
+        <Route element={<KitchenLayout />}>
+          <Route path="/app/kitchen" element={<KitchenPage />} />
         </Route>
         {/* Outside AppShell (no nav/logout chrome) — a focused first-run
             screen, not a dashboard tab (task instruction section 13). */}

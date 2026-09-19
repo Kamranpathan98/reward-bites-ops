@@ -158,3 +158,20 @@ export type {
   ReopenOrderRequest,
   ListOrdersQuery,
 } from './orders';
+
+export {
+  kitchenOrderStatusSchema,
+  kitchenOrderLineAddonViewSchema,
+  kitchenOrderLineViewSchema,
+  kitchenOrderTicketViewSchema,
+  kitchenOrdersResponseSchema,
+  kitchenOrdersQuerySchema,
+} from './kitchen';
+export type {
+  KitchenOrderStatus,
+  KitchenOrderLineAddonView,
+  KitchenOrderLineView,
+  KitchenOrderTicketView,
+  KitchenOrdersResponse,
+  KitchenOrdersQuery,
+} from './kitchen';

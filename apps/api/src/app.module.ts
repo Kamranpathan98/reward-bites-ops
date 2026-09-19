@@ -4,6 +4,7 @@ import { DbModule } from './common/db/db.module';
 import { SecurityModule } from './common/security/security.module';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { KitchenModule } from './modules/kitchen/kitchen.module';
 import { MenuModule } from './modules/menu/menu.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PlatformModule } from './modules/platform/platform.module';
@@ -22,6 +23,7 @@ import { TenancyModule } from './modules/tenancy/tenancy.module';
     TablesModule,
     MenuModule,
     OrdersModule,
+    KitchenModule,
   ],
 })
 export class AppModule {}
