@@ -8,16 +8,16 @@
 
 ## 1. Skills Activated
 
-| Skill | Reason |
-|-------|--------|
-| `@brainstorming` | Structured design-before-implementation discipline |
-| `@writing-plans` | Discovery document format and plan conventions |
-| `@verification-before-completion` | Evidence-backed claims only — every statement verified from source |
-| `@receiving-code-review` | Evaluate discoveries technically, not assumptively |
-| `@requesting-code-review` | Prepare for implementation review checkpoint |
-| `@systematic-debugging` | Trace existing behavior from DB → service → frontend |
-| `@database-admin` | RLS, grants, tenant isolation analysis |
-| `@supabase-postgres-best-practices` | Multi-tenant PostgreSQL patterns |
+| Skill                               | Reason                                                             |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| `@brainstorming`                    | Structured design-before-implementation discipline                 |
+| `@writing-plans`                    | Discovery document format and plan conventions                     |
+| `@verification-before-completion`   | Evidence-backed claims only — every statement verified from source |
+| `@receiving-code-review`            | Evaluate discoveries technically, not assumptively                 |
+| `@requesting-code-review`           | Prepare for implementation review checkpoint                       |
+| `@systematic-debugging`             | Trace existing behavior from DB → service → frontend               |
+| `@database-admin`                   | RLS, grants, tenant isolation analysis                             |
+| `@supabase-postgres-best-practices` | Multi-tenant PostgreSQL patterns                                   |
 
 ---
 
@@ -72,12 +72,12 @@ ALTER TABLE public.tenant_settings FORCE ROW LEVEL SECURITY;
 
 ### Grants
 
-| Role | `tenant_settings` |
-|------|----------------|
-| `app_rw` | `SELECT, INSERT, UPDATE, DELETE` (generic loop — no exception) |
-| `app_platform` | `SELECT, INSERT, UPDATE` (provisioning) |
-| `app_migrator` | DDL; NOBYPASSRLS = false |
-| `app_public` | None |
+| Role           | `tenant_settings`                                              |
+| -------------- | -------------------------------------------------------------- |
+| `app_rw`       | `SELECT, INSERT, UPDATE, DELETE` (generic loop — no exception) |
+| `app_platform` | `SELECT, INSERT, UPDATE` (provisioning)                        |
+| `app_migrator` | DDL; NOBYPASSRLS = false                                       |
+| `app_public`   | None                                                           |
 
 ### Permission Catalog (Already Seeded — No New Permissions Needed)
 
@@ -91,12 +91,12 @@ From `V202609180904__data_seed_permissions.sql`:
 
 ### System Role → Permission Matrix (Source: `system-role-templates.ts`)
 
-| Role | `settings.read` | `settings.update` | `settings.payments.manage` |
-|------|:-:|:-:|:-:|
-| **Owner** | ✅ | ✅ | ✅ |
-| **Manager** | ✅ | ✅ | ❌ (explicitly in `MANAGER_EXCLUDED`) |
-| **Cashier** | ❌ | ❌ | ❌ |
-| **Kitchen Staff** | ❌ | ❌ | ❌ |
+| Role              | `settings.read` | `settings.update` |      `settings.payments.manage`       |
+| ----------------- | :-------------: | :---------------: | :-----------------------------------: |
+| **Owner**         |       ✅        |        ✅         |                  ✅                   |
+| **Manager**       |       ✅        |        ✅         | ❌ (explicitly in `MANAGER_EXCLUDED`) |
+| **Cashier**       |       ❌        |        ❌         |                  ❌                   |
+| **Kitchen Staff** |       ❌        |        ❌         |                  ❌                   |
 
 `MANAGER_EXCLUDED = new Set(['users.manage', 'settings.payments.manage', 'tenant.delete'])` — already locked in code and DB.
 
@@ -128,12 +128,12 @@ Settings evaluated **at payment time only** — not cached, not snapshot into pa
 
 ### Current `tenant_settings` Defaults
 
-| Column | Default | Notes |
-|--------|---------|-------|
-| `cash_enabled` | `true` | DB column default |
-| `upi_enabled` | `false` | DB column default — opt-in |
-| `upi_id` | `NULL` | No validation constraint |
-| `upi_reference_required` | `true` | DB column default |
+| Column                   | Default | Notes                      |
+| ------------------------ | ------- | -------------------------- |
+| `cash_enabled`           | `true`  | DB column default          |
+| `upi_enabled`            | `false` | DB column default — opt-in |
+| `upi_id`                 | `NULL`  | No validation constraint   |
+| `upi_reference_required` | `true`  | DB column default          |
 
 All 50 dev tenant rows confirmed at `upi_enabled = false`.
 
@@ -205,9 +205,9 @@ Return OrganizationSettings response
 
 ### Permissions (No New Permissions — All Already Seeded)
 
-| Action | Required Permission | Roles |
-|--------|-------------------|-------|
-| `GET /organization/settings` | `settings.read` | Owner, Manager |
+| Action                         | Required Permission        | Roles          |
+| ------------------------------ | -------------------------- | -------------- |
+| `GET /organization/settings`   | `settings.read`            | Owner, Manager |
 | `PATCH /organization/settings` | `settings.payments.manage` | **Owner only** |
 
 ### Guard Stack (Identical Pattern to Existing Routes)
@@ -232,12 +232,12 @@ export class SettingsController {
 
 ### Existing `tenant_settings` — SUFFICIENT. No New Table. No New Columns.
 
-| Field | Type | Nullable | Validation | Who Can Change | Audited |
-|-------|------|----------|------------|----------------|---------|
-| `cash_enabled` | `BOOLEAN NOT NULL` | No | — | Owner | Yes |
-| `upi_enabled` | `BOOLEAN NOT NULL` | No | See business rules | Owner | Yes |
-| `upi_id` | `TEXT` | Yes | Max 100 chars; UPI VPA format when provided | Owner | Yes |
-| `upi_reference_required` | `BOOLEAN NOT NULL` | No | — | Owner | Yes |
+| Field                    | Type               | Nullable | Validation                                                                         | Who Can Change | Audited |
+| ------------------------ | ------------------ | -------- | ---------------------------------------------------------------------------------- | -------------- | ------- |
+| `cash_enabled`           | `BOOLEAN NOT NULL` | No       | —                                                                                  | Owner          | Yes     |
+| `upi_enabled`            | `BOOLEAN NOT NULL` | No       | See business rules                                                                 | Owner          | Yes     |
+| `upi_id`                 | `TEXT`             | Yes      | Trimmed; max 100 chars; no control characters. No VPA grammar (locked decision 15) | Owner          | Yes     |
+| `upi_reference_required` | `BOOLEAN NOT NULL` | No       | —                                                                                  | Owner          | Yes     |
 
 **`updated_at`:** Service must explicitly set `updated_at = now()` in the UPDATE query. No trigger exists today.
 
@@ -250,6 +250,7 @@ export class SettingsController {
 **Permission:** `settings.read`
 
 **Response:**
+
 ```json
 {
   "data": {
@@ -270,6 +271,7 @@ Only the four payment columns are exposed. `orders_workflow`, `round_to_rupee`, 
 **Permission:** `settings.payments.manage`
 
 **Request body (all optional — PATCH semantics):**
+
 ```json
 {
   "cashEnabled": true,
@@ -280,16 +282,18 @@ Only the four payment columns are exposed. `orders_workflow`, `round_to_rupee`, 
 ```
 
 **Business rules (applied to merged resulting state):**
+
 1. If resulting `upiEnabled = true` → `upiId` must be non-null and non-empty
 2. If resulting `cashEnabled = false && upiEnabled = false` → `PAYMENT_METHOD_REQUIRED` 422
-3. `upiId` format: `[a-z0-9._-]+@[a-z]+`, max 100 chars
-4. Empty string `upiId` → treated as null
+3. `upiId` is trimmed, at most 100 characters, with no control characters (PostgreSQL TEXT cannot hold NUL). There is deliberately **no VPA format regex**.
+4. Empty or whitespace-only `upiId` → treated as null
 5. `upiId = null` valid when `upiEnabled = false`
 
 **Response:** Same shape as GET.
 
 **Error codes:**
-- `VALIDATION_FAILED` (422) — malformed fields
+
+- `VALIDATION_FAILED` (**400**, request-shape rule via `ZodValidationPipe`) — unknown field, wrong type, `upiId` over 100 characters or containing a control character
 - `UPI_ID_REQUIRED` (422) — `upiEnabled=true` but `upiId` is null
 - `PAYMENT_METHOD_REQUIRED` (422) — attempt to disable all payment methods
 - `403` — insufficient permission
@@ -310,8 +314,8 @@ PATCH (partial update). Server reads current row, merges submitted fields, valid
 
 **Future option (if needed):** Add `settings_version INT DEFAULT 0` + client sends `expectedVersion` in PATCH. Same pattern as `bill.version`.
 
-> [!IMPORTANT]
-> **Open Decision #12:** Does V1 require optimistic concurrency for settings updates?
+> [!NOTE]
+> **Decision #12 (resolved): no optimistic concurrency in V1 — last writer wins.** PATCH still runs its read-merge-validate-write under a `SELECT … FOR UPDATE` row lock on the tenant's `tenant_settings` row. That is a pessimistic lock, not versioning: it serializes writers so each validates against the state the previous one committed. Without it, two concurrent PATCHes (`cashEnabled=false` and `upiEnabled=false`) could each pass validation and together leave both methods off. Only fields that actually change are written, so concurrent edits to different fields both survive; concurrent edits to the same field resolve to the last writer.
 
 ---
 
@@ -327,7 +331,7 @@ await recordAuditEvent(tx, {
   actorKind: 'staff',
   actorId: userId,
   before: { cashEnabled, upiEnabled, upiId, upiReferenceRequired },
-  after:  { cashEnabled, upiEnabled, upiId, upiReferenceRequired },
+  after: { cashEnabled, upiEnabled, upiId, upiReferenceRequired },
 });
 ```
 
@@ -339,25 +343,25 @@ await recordAuditEvent(tx, {
 
 ## 12. RLS / Security Threat Model
 
-| Threat | Defense |
-|--------|---------|
-| Tenant A updates Tenant B settings | RLS `WITH CHECK`: `tenant_id = app.tenant_id` GUC. GUC set from verified JWT `tid`, never client input |
-| Forged `tenant_id` in request body | Contract never accepts `tenant_id` from body |
-| Missing/empty GUC | `NULLIF('', '')::uuid` = NULL → fail-closed |
-| Malformed GUC | `::uuid` cast error → transaction aborts |
-| Stale tenant context | JWT `rv` claim vs DB `security_version` |
-| Staff updates settings | `PermissionGuard` → 403 |
-| Manager updates payment settings | `settings.payments.manage` in `MANAGER_EXCLUDED` → 403 |
-| Unauthenticated request | `AuthGuard` → 401 |
-| Malformed `upiId` (HTML/script) | Zod validation rejects; stored as TEXT, never evaluated as HTML |
-| SQL injection via `upiId` | Parameterized queries throughout |
-| UPI enabled without UPI ID | Service validates: `UPI_ID_REQUIRED` 422 |
-| Both methods disabled | Service validates: `PAYMENT_METHOD_REQUIRED` 422 |
-| Settings change affecting in-flight payments | Settings evaluated at `POST /payments` time — a payment already inside its transaction is unaffected |
-| Settings change affecting finalized bills | No effect — all payments already recorded |
-| `app_rw` UPDATE without GUC | `FORCE ROW LEVEL SECURITY` → 0 rows affected |
-| Platform admin forging tenant context | No settings API endpoint for platform role |
-| `app_rw` BYPASSRLS | `assertNoBypassRls()` in `main.ts` confirms at startup |
+| Threat                                       | Defense                                                                                                                             |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Tenant A updates Tenant B settings           | RLS `WITH CHECK`: `tenant_id = app.tenant_id` GUC. GUC set from verified JWT `tid`, never client input                              |
+| Forged `tenant_id` in request body           | Contract never accepts `tenant_id` from body                                                                                        |
+| Missing/empty GUC                            | `NULLIF('', '')::uuid` = NULL → fail-closed                                                                                         |
+| Malformed GUC                                | `::uuid` cast error → transaction aborts                                                                                            |
+| Stale tenant context                         | JWT `rv` claim vs DB `security_version`                                                                                             |
+| Staff updates settings                       | `PermissionGuard` → 403                                                                                                             |
+| Manager updates payment settings             | `settings.payments.manage` in `MANAGER_EXCLUDED` → 403                                                                              |
+| Unauthenticated request                      | `AuthGuard` → 401                                                                                                                   |
+| `upiId` containing HTML/script               | Stored as inert TEXT and returned as JSON data (no VPA grammar is imposed); control characters and >100 chars are rejected with 400 |
+| SQL injection via `upiId`                    | Parameterized queries throughout                                                                                                    |
+| UPI enabled without UPI ID                   | Service validates: `UPI_ID_REQUIRED` 422                                                                                            |
+| Both methods disabled                        | Service validates: `PAYMENT_METHOD_REQUIRED` 422                                                                                    |
+| Settings change affecting in-flight payments | Settings evaluated at `POST /payments` time — a payment already inside its transaction is unaffected                                |
+| Settings change affecting finalized bills    | No effect — all payments already recorded                                                                                           |
+| `app_rw` UPDATE without GUC                  | `FORCE ROW LEVEL SECURITY` → 0 rows affected                                                                                        |
+| Platform admin forging tenant context        | No settings API endpoint for platform role                                                                                          |
+| `app_rw` BYPASSRLS                           | `assertNoBypassRls()` in `main.ts` confirms at startup                                                                              |
 
 ---
 
@@ -370,11 +374,13 @@ await recordAuditEvent(tx, {
 Precedent: `/app/settings/users` already exists. `settings/` prefix is established.
 
 **`App.tsx`:**
+
 ```tsx
 <Route path="settings/payments" element={<PaymentSettingsPage />} />
 ```
 
 **`app-shell.tsx` nav addition:**
+
 ```tsx
 { to: '/app/settings/payments', label: 'Payments', permission: 'settings.read' as const },
 ```
@@ -409,8 +415,8 @@ Accept payments via UPI
 
 ### UX Rules
 
-1. Manager sees the page (has `settings.read`) — Save is hidden with "Contact owner to change payment settings"
-2. Toggling UPI ON reveals UPI ID + UTR toggle inline (no page reload)
+1. Manager sees the page (has `settings.read`) with every current value shown read-only (checkboxes disabled, UPI ID `readonly`), no Save button, and a note that they cannot change these settings. Users without `settings.read` see a no-access message and the settings are never requested.
+2. The UPI ID and UTR controls are always visible, so a stored ID (preserved while UPI is off) is never hidden
 3. UPI ON + empty UPI ID → inline error before submission
 4. Turning both OFF → "At least one payment method must remain active" warning
 5. Success: "Payment settings saved" toast
@@ -430,6 +436,7 @@ Accept payments via UPI
 ## 14. Defaults and Onboarding
 
 Provisioning defaults (verified from source):
+
 - `cash_enabled = true`, `upi_enabled = false`, `upi_id = NULL`, `upi_reference_required = true`
 
 > [!IMPORTANT]
@@ -441,14 +448,14 @@ Provisioning defaults (verified from source):
 
 ## 15. Backward Compatibility
 
-| Gate 8 Invariant | Status |
-|-----------------|--------|
-| Full settlement (no partial) | ✅ Untouched |
-| Payment insert-only ledger | ✅ Untouched |
-| UPI UTR validation | ✅ `PaymentsService.validateMethod` unchanged |
-| Payment idempotency | ✅ Unchanged |
-| Bill finalization | ✅ Unchanged |
-| Bill void semantics | ✅ Unchanged |
+| Gate 8 Invariant             | Status                                        |
+| ---------------------------- | --------------------------------------------- |
+| Full settlement (no partial) | ✅ Untouched                                  |
+| Payment insert-only ledger   | ✅ Untouched                                  |
+| UPI UTR validation           | ✅ `PaymentsService.validateMethod` unchanged |
+| Payment idempotency          | ✅ Unchanged                                  |
+| Bill finalization            | ✅ Unchanged                                  |
+| Bill void semantics          | ✅ Unchanged                                  |
 
 Settings only gate whether a future `POST /payments` is allowed. Existing PAID bills are unaffected.
 
@@ -458,48 +465,48 @@ Settings only gate whether a future `POST /payments` is allowed. Existing PAID b
 
 ### API Integration Tests
 
-| Test | Expected |
-|------|---------|
-| Owner reads settings | 200 |
-| Manager reads settings | 200 |
-| Cashier reads settings | 403 |
-| Unauthenticated reads | 401 |
-| Owner patches `upiEnabled: true, upiId: 'r@hdfc'` | 200, persisted |
-| Owner patches `upiEnabled: true` (no UPI ID) | 422 `UPI_ID_REQUIRED` |
-| Owner disables both methods | 422 `PAYMENT_METHOD_REQUIRED` |
-| Owner sets invalid UPI ID format | 422 `VALIDATION_FAILED` |
-| Manager patches payment settings | 403 |
-| Cross-tenant read/write | RLS blocks → 0 rows / 403 |
-| Audit event after successful PATCH | `audit_event` row exists with before/after |
-| No audit event if nothing changed | No insert |
+| Test                                                    | Expected                                   |
+| ------------------------------------------------------- | ------------------------------------------ |
+| Owner reads settings                                    | 200                                        |
+| Manager reads settings                                  | 200                                        |
+| Cashier reads settings                                  | 403                                        |
+| Unauthenticated reads                                   | 401                                        |
+| Owner patches `upiEnabled: true, upiId: 'r@hdfc'`       | 200, persisted                             |
+| Owner patches `upiEnabled: true` (no UPI ID)            | 422 `UPI_ID_REQUIRED`                      |
+| Owner disables both methods                             | 422 `PAYMENT_METHOD_REQUIRED`              |
+| Owner sends a 101-character or control-character UPI ID | 400 `VALIDATION_FAILED`                    |
+| Manager patches payment settings                        | 403                                        |
+| Cross-tenant read/write                                 | RLS blocks → 0 rows / 403                  |
+| Audit event after successful PATCH                      | `audit_event` row exists with before/after |
+| No audit event if nothing changed                       | No insert                                  |
 
 ### DB/RLS Tests
 
-| Test | Expected |
-|------|---------|
-| `app_rw` UPDATE with wrong `app.tenant_id` | 0 rows affected |
-| `app_rw` UPDATE with no GUC | 0 rows affected (RLS blocks) |
+| Test                                       | Expected                     |
+| ------------------------------------------ | ---------------------------- |
+| `app_rw` UPDATE with wrong `app.tenant_id` | 0 rows affected              |
+| `app_rw` UPDATE with no GUC                | 0 rows affected (RLS blocks) |
 
 ### Frontend Tests
 
-| Test | Expected |
-|------|---------|
-| Page loads with current settings | Toggles reflect DB state |
-| Manager sees read-only view | Save hidden/disabled |
-| Toggle UPI ON → UPI ID field appears | Conditional render |
-| Submit with UPI ON + empty UPI ID | Inline error, no API call |
-| Successful save → success feedback | |
-| API error → error message | |
-| All controls keyboard-accessible | |
-| 390px / 768px breakpoints | No overflow |
+| Test                                 | Expected                  |
+| ------------------------------------ | ------------------------- |
+| Page loads with current settings     | Toggles reflect DB state  |
+| Manager sees read-only view          | Save hidden/disabled      |
+| Toggle UPI ON → UPI ID field appears | Conditional render        |
+| Submit with UPI ON + empty UPI ID    | Inline error, no API call |
+| Successful save → success feedback   |                           |
+| API error → error message            |                           |
+| All controls keyboard-accessible     |                           |
+| 390px / 768px breakpoints            | No overflow               |
 
 ### Regression
 
-| Test | Expected |
-|------|---------|
-| Gate 8 full test suite | All green |
+| Test                                     | Expected  |
+| ---------------------------------------- | --------- |
+| Gate 8 full test suite                   | All green |
 | UPI disabled → `PAYMENT_METHOD_DISABLED` | Preserved |
-| Cash payment → recorded | Preserved |
+| Cash payment → recorded                  | Preserved |
 
 ---
 
@@ -507,20 +514,20 @@ Settings only gate whether a future `POST /payments` is allowed. Existing PAID b
 
 These require explicit confirmation before implementation:
 
-| # | Decision | Discovery Recommendation |
-|---|----------|--------------------------|
-| 1 | Can cash be disabled? | YES (guard prevents both-off) |
-| 2 | Must UPI ID be present before enabling UPI? | YES |
-| 3 | Is UPI ID preserved when UPI is disabled? | YES (don't null on disable) |
-| 4 | Is UTR toggle independent of UPI enabled? | YES |
-| 5 | Can both cash and UPI be disabled simultaneously? | NO — `PAYMENT_METHOD_REQUIRED` |
-| 6 | Who can modify payment settings? | Owner only |
-| 7 | Platform admins modify tenant settings via API? | NO |
-| 8 | Settings changes require a reason field? | NO |
-| 9 | Settings changes audited? | YES — mandatory, same transaction |
-| 10 | Settings in onboarding? | NO |
-| 11 | Settings changes affect only future payments? | YES |
-| 12 | Need optimistic concurrency? | NO for V1 |
+| #   | Decision                                          | Discovery Recommendation          |
+| --- | ------------------------------------------------- | --------------------------------- |
+| 1   | Can cash be disabled?                             | YES (guard prevents both-off)     |
+| 2   | Must UPI ID be present before enabling UPI?       | YES                               |
+| 3   | Is UPI ID preserved when UPI is disabled?         | YES (don't null on disable)       |
+| 4   | Is UTR toggle independent of UPI enabled?         | YES                               |
+| 5   | Can both cash and UPI be disabled simultaneously? | NO — `PAYMENT_METHOD_REQUIRED`    |
+| 6   | Who can modify payment settings?                  | Owner only                        |
+| 7   | Platform admins modify tenant settings via API?   | NO                                |
+| 8   | Settings changes require a reason field?          | NO                                |
+| 9   | Settings changes audited?                         | YES — mandatory, same transaction |
+| 10  | Settings in onboarding?                           | NO                                |
+| 11  | Settings changes affect only future payments?     | YES                               |
+| 12  | Need optimistic concurrency?                      | NO for V1                         |
 
 ---
 
@@ -528,30 +535,30 @@ These require explicit confirmation before implementation:
 
 > Execute ONLY after open decisions confirmed.
 
-| Step | What | Files |
-|------|------|-------|
-| 1 | Contracts — `OrganizationPaymentSettings` + `UpdatePaymentSettingsRequest` Zod schemas | `packages/contracts/src/settings.ts` (NEW) |
-| 2 | Backend — `SettingsRepository` | `apps/api/src/modules/tenancy/settings.repository.ts` (NEW) |
-| 3 | Backend — `SettingsService` (merge, validate, update, audit) | `apps/api/src/modules/tenancy/settings.service.ts` (NEW) |
-| 4 | Backend — `SettingsController` (`GET` + `PATCH`) | `apps/api/src/modules/tenancy/settings.controller.ts` (NEW) |
-| 5 | Backend — register in `TenancyModule` | `apps/api/src/modules/tenancy/tenancy.module.ts` (MODIFY) |
-| 6 | Backend integration tests | `apps/api/test/db/settings.integration.spec.ts` (NEW) |
-| 7 | Frontend — `useOrganizationSettings` + `useUpdatePaymentSettings` | `apps/web/src/features/settings/use-settings.ts` (NEW) |
-| 8 | Frontend — `PaymentSettingsPage` + tests | `apps/web/src/routes/staff/payment-settings-page.tsx` (NEW) |
-| 9 | Frontend — register route + nav item | `App.tsx` (MODIFY), `app-shell.tsx` (MODIFY) |
+| Step | What                                                                                   | Files                                                       |
+| ---- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 1    | Contracts — `OrganizationPaymentSettings` + `UpdatePaymentSettingsRequest` Zod schemas | `packages/contracts/src/settings.ts` (NEW)                  |
+| 2    | Backend — `SettingsRepository`                                                         | `apps/api/src/modules/tenancy/settings.repository.ts` (NEW) |
+| 3    | Backend — `SettingsService` (merge, validate, update, audit)                           | `apps/api/src/modules/tenancy/settings.service.ts` (NEW)    |
+| 4    | Backend — `SettingsController` (`GET` + `PATCH`)                                       | `apps/api/src/modules/tenancy/settings.controller.ts` (NEW) |
+| 5    | Backend — register in `TenancyModule`                                                  | `apps/api/src/modules/tenancy/tenancy.module.ts` (MODIFY)   |
+| 6    | Backend integration tests                                                              | `apps/api/test/db/settings.integration.spec.ts` (NEW)       |
+| 7    | Frontend — `useOrganizationSettings` + `useUpdatePaymentSettings`                      | `apps/web/src/features/settings/use-settings.ts` (NEW)      |
+| 8    | Frontend — `PaymentSettingsPage` + tests                                               | `apps/web/src/routes/staff/payment-settings-page.tsx` (NEW) |
+| 9    | Frontend — register route + nav item                                                   | `App.tsx` (MODIFY), `app-shell.tsx` (MODIFY)                |
 
 ---
 
 ## 19. Risks
 
-| Risk | Likelihood | Mitigation |
-|------|-----------|-----------|
-| Manager accidentally gets `settings.payments.manage` | Low | `MANAGER_EXCLUDED` already in DB + code |
-| UPI enabled without UPI ID | Medium | Service + frontend validation prevents this state |
-| Both methods disabled by accident | Medium | `PAYMENT_METHOD_REQUIRED` 422 validation |
-| Audit row lost | Low | `recordAuditEvent` inside `withTenantTx` — fails → rollback |
-| Cross-tenant bypass | Minimal | `FORCE ROW LEVEL SECURITY` + `assertNoBypassRls` |
-| UPI ID leaking PII | None | VPAs are public merchant identifiers |
+| Risk                                                 | Likelihood | Mitigation                                                  |
+| ---------------------------------------------------- | ---------- | ----------------------------------------------------------- |
+| Manager accidentally gets `settings.payments.manage` | Low        | `MANAGER_EXCLUDED` already in DB + code                     |
+| UPI enabled without UPI ID                           | Medium     | Service + frontend validation prevents this state           |
+| Both methods disabled by accident                    | Medium     | `PAYMENT_METHOD_REQUIRED` 422 validation                    |
+| Audit row lost                                       | Low        | `recordAuditEvent` inside `withTenantTx` — fails → rollback |
+| Cross-tenant bypass                                  | Minimal    | `FORCE ROW LEVEL SECURITY` + `assertNoBypassRls`            |
+| UPI ID leaking PII                                   | None       | VPAs are public merchant identifiers                        |
 
 ---
 
@@ -567,16 +574,15 @@ These require explicit confirmation before implementation:
 
 ## 21. Red-Team Results
 
-| Attack | Fix Applied |
-|--------|-------------|
-| Staff modifies settings | `PermissionGuard` → 403 confirmed |
-| Manager modifies payment settings | `settings.payments.manage` in `MANAGER_EXCLUDED` — confirmed from source |
-| API trusts `tenantId` from request body | Contract never accepts `tenantId` from body |
-| UPI enabled without UPI ID | `UPI_ID_REQUIRED` service + frontend validation added |
-| Both payment methods disabled | `PAYMENT_METHOD_REQUIRED` validation added |
-| Concurrent admin overwrites | Documented explicitly as last-writer-wins V1 decision |
-| `actorId` forged from client | `actorId` = `user.userId` from verified JWT only |
-| RLS bypassed | `assertNoBypassRls()` at startup + `FORCE ROW LEVEL SECURITY` |
-| Settings change retroactively breaks payments | Settings evaluated at payment time only — confirmed |
-| Second source of truth for settings | `BillRepository.getBillingSettings` reads same `tenant_settings` table |
-
+| Attack                                        | Fix Applied                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------ |
+| Staff modifies settings                       | `PermissionGuard` → 403 confirmed                                        |
+| Manager modifies payment settings             | `settings.payments.manage` in `MANAGER_EXCLUDED` — confirmed from source |
+| API trusts `tenantId` from request body       | Contract never accepts `tenantId` from body                              |
+| UPI enabled without UPI ID                    | `UPI_ID_REQUIRED` service + frontend validation added                    |
+| Both payment methods disabled                 | `PAYMENT_METHOD_REQUIRED` validation added                               |
+| Concurrent admin overwrites                   | Documented explicitly as last-writer-wins V1 decision                    |
+| `actorId` forged from client                  | `actorId` = `user.userId` from verified JWT only                         |
+| RLS bypassed                                  | `assertNoBypassRls()` at startup + `FORCE ROW LEVEL SECURITY`            |
+| Settings change retroactively breaks payments | Settings evaluated at payment time only — confirmed                      |
+| Second source of truth for settings           | `BillRepository.getBillingSettings` reads same `tenant_settings` table   |

@@ -564,8 +564,10 @@ export class BillRepository {
   /**
    * Narrow, local read of the billing-relevant `tenant_settings` (same precedent
    * as OrderRepository.getOrdersWorkflow: the module graph does not let billing
-   * import the tenancy repository). There is no settings API in V1, so the
-   * column defaults are the effective values (round_to_rupee = true).
+   * import the tenancy repository). The payment toggles (cash_enabled,
+   * upi_enabled, upi_reference_required) are editable through
+   * PATCH /organization/settings; the other columns have no API in V1, so their
+   * defaults are the effective values (round_to_rupee = true).
    */
   async getBillingSettings(tx: TransactionContext, tenantId: string): Promise<BillingSettings> {
     const result = await tx.query<{

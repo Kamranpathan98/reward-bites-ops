@@ -332,7 +332,10 @@ export async function recordPayment(
   return request(h.app.getHttpServer()).post('/api/v1/payments').set(bearer(t)).send(body);
 }
 
-/** Enable UPI for a tenant (there is no settings API in V1; the column default is upi_enabled = false). */
+/**
+ * Enable UPI for a tenant by writing the column directly (default is upi_enabled = false). Billing
+ * suites use this shortcut so they don't depend on PATCH /organization/settings, which has its own suite.
+ */
 export async function enableUpi(h: Harness, t: Tenant): Promise<void> {
   await asTenant(h, t.tenantId, (tx) =>
     tx.query('UPDATE tenant_settings SET upi_enabled = true WHERE tenant_id = $1', [t.tenantId]),

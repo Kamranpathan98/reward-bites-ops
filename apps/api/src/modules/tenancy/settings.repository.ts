@@ -10,6 +10,13 @@ export interface OrganizationPaymentSettingsRow {
   updatedAt: Date;
 }
 
+export interface OrganizationPaymentSettingsUpdate {
+  cashEnabled?: boolean;
+  upiEnabled?: boolean;
+  upiId?: string | null;
+  upiReferenceRequired?: boolean;
+}
+
 interface TenantSettingsSqlRow {
   tenant_id: string;
   cash_enabled: boolean;
@@ -36,10 +43,32 @@ export class SettingsRepository {
     tx: TransactionContext,
     tenantId: string,
   ): Promise<OrganizationPaymentSettingsRow> {
+    return this.selectPaymentSettings(tx, tenantId, '');
+  }
+
+  /**
+   * Row-locking read for the write path. Two concurrent PATCHes each validating
+   * against a stale read could together commit a state neither validated (e.g.
+   * cash=false and upi=false at once). Locking serializes writers; the second
+   * one re-reads the committed row and validates its merge against that. This is
+   * a pessimistic row lock, not optimistic versioning — last writer still wins.
+   */
+  async lockPaymentSettings(
+    tx: TransactionContext,
+    tenantId: string,
+  ): Promise<OrganizationPaymentSettingsRow> {
+    return this.selectPaymentSettings(tx, tenantId, ' FOR UPDATE');
+  }
+
+  private async selectPaymentSettings(
+    tx: TransactionContext,
+    tenantId: string,
+    lockClause: '' | ' FOR UPDATE',
+  ): Promise<OrganizationPaymentSettingsRow> {
     const result = await tx.query<TenantSettingsSqlRow>(
       `SELECT tenant_id, cash_enabled, upi_enabled, upi_id, upi_reference_required, updated_at
        FROM tenant_settings
-       WHERE tenant_id = $1`,
+       WHERE tenant_id = $1${lockClause}`,
       [tenantId],
     );
 
@@ -51,12 +80,7 @@ export class SettingsRepository {
   async updatePaymentSettings(
     tx: TransactionContext,
     tenantId: string,
-    update: {
-      cashEnabled?: boolean;
-      upiEnabled?: boolean;
-      upiId?: string | null;
-      upiReferenceRequired?: boolean;
-    },
+    update: OrganizationPaymentSettingsUpdate,
   ): Promise<OrganizationPaymentSettingsRow> {
     // Build dynamic UPDATE clause
     const setClauses: string[] = [];
@@ -83,13 +107,8 @@ export class SettingsRepository {
       values.push(update.upiReferenceRequired);
     }
 
-    // Always update updated_at
+    // The service never calls this with an empty change set (it returns early on a no-op).
     setClauses.push(`updated_at = now()`);
-
-    if (setClauses.length === 1) {
-      // No actual changes, just return current state
-      return this.getPaymentSettings(tx, tenantId);
-    }
 
     const sql = `UPDATE tenant_settings
                  SET ${setClauses.join(', ')}

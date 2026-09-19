@@ -1,7 +1,8 @@
 import { Controller, Get, Inject, Patch, UseGuards, Body } from '@nestjs/common';
-import type {
-  OrganizationSettingsResponse,
-  PatchOrganizationPaymentSettingsRequest,
+import {
+  patchOrganizationPaymentSettingsRequestSchema,
+  type OrganizationSettingsResponse,
+  type PatchOrganizationPaymentSettingsRequest,
 } from '@rewardbite/contracts';
 import {
   AuthGuard,
@@ -12,6 +13,7 @@ import {
 } from '../../common/guards';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { DB_POOL, withTenantTx, type Pool } from '../../common/db';
+import { ZodValidationPipe } from '../../common/validation/zod-validation.pipe';
 import { SettingsService } from './settings.service';
 
 /**
@@ -55,7 +57,8 @@ export class SettingsController {
   @RequirePermission('settings.payments.manage')
   async updateSettings(
     @CurrentUser() user: AuthenticatedUser,
-    @Body() body: PatchOrganizationPaymentSettingsRequest,
+    @Body(new ZodValidationPipe(patchOrganizationPaymentSettingsRequestSchema))
+    body: PatchOrganizationPaymentSettingsRequest,
   ): Promise<OrganizationSettingsResponse> {
     const tenantId = user.tenantId as string;
 
