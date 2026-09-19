@@ -369,7 +369,11 @@ function ItemRow({
         </div>
 
         {showVariantForm && (
-          <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={onSubmitVariant} noValidate>
+          <form
+            className="mt-2 flex flex-wrap items-end gap-2"
+            onSubmit={onSubmitVariant}
+            noValidate
+          >
             <div className="flex flex-col gap-1">
               <Label htmlFor={`variant-name-${item.id}`}>Variant name</Label>
               <Input id={`variant-name-${item.id}`} {...registerVariant('name')} />
@@ -387,9 +391,7 @@ function ItemRow({
                 value={variantPrice}
                 onChange={(e) => setVariantPrice(e.target.value)}
               />
-              {variantPriceError && (
-                <p className="text-xs text-red-600">{variantPriceError}</p>
-              )}
+              {variantPriceError && <p className="text-xs text-red-600">{variantPriceError}</p>}
             </div>
             <Button type="submit" size="sm" disabled={createVariant.isPending}>
               Add
