@@ -33,6 +33,12 @@
 -- (tenant_id = app.tenant_id, USING + WITH CHECK, forced) — none needs a
 -- bespoke policy. This comment is also the checksum-bump touch Flyway needs
 -- to re-run the dynamic loop for the new tables.
+-- bespoke policy.
+--
+-- Gate 10 (expenses): expense_category and expense pick up the plain generic
+-- policy below (forced RLS, tenant_id = app.tenant_id, USING + WITH CHECK).
+-- This comment is the checksum-bump touch Flyway needs to re-run the dynamic
+-- loop for the new tables.
 DO $$
 DECLARE
   rec RECORD;

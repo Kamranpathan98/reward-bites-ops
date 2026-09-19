@@ -7,6 +7,7 @@ import { MembershipRepository } from '../identity/membership.repository';
 import { RoleRepository } from '../identity/role.repository';
 import { UserRepository } from '../identity/user.repository';
 import { TenantRepository } from '../tenancy/tenant.repository';
+import { ExpenseCategoryRepository } from '../expenses/expense-category.repository';
 import { recordAuditEvent } from '../audit/audit-writer';
 import { PLATFORM_DB_POOL } from './platform-db.module';
 import { SYSTEM_ROLE_TEMPLATES } from './system-role-templates';
@@ -34,6 +35,7 @@ export class PlatformService {
     private readonly roleRepository: RoleRepository,
     private readonly membershipRepository: MembershipRepository,
     private readonly userRepository: UserRepository,
+    private readonly expenseCategoryRepository: ExpenseCategoryRepository,
   ) {}
 
   /**
@@ -73,6 +75,7 @@ export class PlatformService {
 
       await this.tenantRepository.create(tx, { id: tenantId, name: input.name, slug: input.slug });
       await this.tenantRepository.createDefaultSettings(tx, tenantId);
+      await this.expenseCategoryRepository.seedDefaults(tx, tenantId);
 
       let ownerRoleId: string | undefined;
       for (const template of SYSTEM_ROLE_TEMPLATES) {

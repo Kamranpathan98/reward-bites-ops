@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '../../common/config/config.module';
 import { IdentityModule } from '../identity/identity.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { ExpensesModule } from '../expenses/expenses.module';
 import { PlatformBootstrapGuard } from './platform-bootstrap.guard';
 import { PlatformController } from './platform.controller';
 import { PlatformDbModule } from './platform-db.module';
@@ -28,7 +29,7 @@ import { SignupService } from './signup.service';
  * deliberately not applied to them.
  */
 @Module({
-  imports: [ConfigModule, PlatformDbModule, TenancyModule, IdentityModule],
+  imports: [ConfigModule, PlatformDbModule, TenancyModule, IdentityModule, ExpensesModule],
   controllers: [PlatformController, SignupController],
   providers: [
     PlatformService,

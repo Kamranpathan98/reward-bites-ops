@@ -67,6 +67,9 @@ BEGIN
     ELSIF rec.table_name = 'bill' THEN
       EXECUTE format('GRANT SELECT, INSERT, UPDATE ON public.%I TO app_rw', rec.table_name);
       EXECUTE format('REVOKE DELETE ON public.%I FROM app_rw', rec.table_name);
+    ELSIF rec.table_name IN ('expense', 'expense_category') THEN
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE ON public.%I TO app_rw', rec.table_name);
+      EXECUTE format('REVOKE DELETE ON public.%I FROM app_rw', rec.table_name);
     ELSIF rec.table_name = 'bill_line' THEN
       EXECUTE format('GRANT SELECT, INSERT, DELETE ON public.%I TO app_rw', rec.table_name);
       EXECUTE format('REVOKE UPDATE ON public.%I FROM app_rw', rec.table_name);

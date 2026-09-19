@@ -6,9 +6,11 @@ import { useLogout, useMe } from '@/features/auth/use-auth';
 
 const navItems = [
   { to: '/app', label: 'Dashboard', disabled: true },
+  { to: '/app', label: 'Dashboard', permission: 'dashboard.read' as const },
   { to: '/app/orders', label: 'Orders', permission: 'orders.read' as const },
   { to: '/app/kitchen', label: 'Kitchen', permission: 'kitchen.read' as const },
   { to: '/app/bills', label: 'Bills', permission: 'bills.read' as const },
+  { to: '/app/expenses', label: 'Expenses', permission: 'expenses.read' as const },
   { to: '/app/tables', label: 'Tables', permission: 'tables.read' as const },
   { to: '/app/menu', label: 'Menu', permission: 'menu.read' as const },
   { to: '/app/settings/users', label: 'Users', permission: 'users.read' as const },

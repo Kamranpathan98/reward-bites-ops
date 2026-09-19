@@ -3,6 +3,8 @@ import { AppShell } from '@/routes/staff/app-shell';
 import { BillDetailPage } from '@/routes/staff/bill-detail-page';
 import { BillsPage } from '@/routes/staff/bills-page';
 import { HomePlaceholder } from '@/routes/staff/home-placeholder';
+import { DashboardPage } from '@/routes/staff/dashboard-page';
+import { ExpensesPage } from '@/routes/staff/expenses-page';
 import { LoginPage } from '@/routes/staff/login';
 import { MenuPage } from '@/routes/staff/menu-page';
 import { OrderDetailPage } from '@/routes/staff/order-detail-page';
@@ -57,6 +59,8 @@ export function App(): JSX.Element {
       <Route element={<ProtectedRoute />}>
         <Route path="/app" element={<AppShell />}>
           <Route index element={<HomePlaceholder />} />
+          <Route index element={<DashboardPage />} />
+          <Route path="expenses" element={<ExpensesPage />} />
           <Route path="settings/users" element={<UsersPage />} />
           <Route path="tables" element={<TablesPage />} />
           <Route path="tables/qr" element={<TablesQrPage />} />

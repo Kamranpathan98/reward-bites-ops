@@ -234,3 +234,50 @@ export type {
   RecordPaymentResponse,
   RecordPaymentRequest,
 } from './payments';
+
+export {
+  DEFAULT_EXPENSE_CATEGORIES,
+  expensePaymentMethodSchema,
+  expenseCategorySchema,
+  expenseCategoryListResponseSchema,
+  createExpenseCategoryRequestSchema,
+  updateExpenseCategoryRequestSchema,
+  expenseSummarySchema,
+  expenseDetailResponseSchema,
+  expensesListResponseSchema,
+  createExpenseRequestSchema,
+  updateExpenseRequestSchema,
+  listExpensesQuerySchema,
+} from './expenses';
+export type {
+  ExpensePaymentMethod,
+  ExpenseCategory,
+  ExpenseCategoryListResponse,
+  CreateExpenseCategoryRequest,
+  UpdateExpenseCategoryRequest,
+  ExpenseSummary,
+  ExpenseDetailResponse,
+  ExpensesListResponse,
+  CreateExpenseRequest,
+  UpdateExpenseRequest,
+  ListExpensesQuery,
+} from './expenses';
+
+export {
+  dashboardSummarySchema,
+  dashboardSummaryResponseSchema,
+  breakdownItemSchema,
+  dashboardBreakdownSchema,
+  dashboardBreakdownResponseSchema,
+  dashboardQuerySchema,
+  dashboardBreakdownQuerySchema,
+} from './dashboard';
+export type {
+  DashboardSummary,
+  DashboardSummaryResponse,
+  BreakdownItem,
+  DashboardBreakdown,
+  DashboardBreakdownResponse,
+  DashboardQuery,
+  DashboardBreakdownQuery,
+} from './dashboard';

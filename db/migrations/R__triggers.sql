@@ -559,6 +559,29 @@ BEGIN
 END;
 $trigger$ LANGUAGE plpgsql;
 
+-- Gate 10: Guard that rejects expense INSERT or category change when the category
+-- is soft-deleted, inactive, or not found.
+CREATE OR REPLACE FUNCTION check_category_active_on_expense() RETURNS trigger AS $trigger$
+DECLARE
+  v_is_active BOOLEAN;
+  v_deleted_at TIMESTAMPTZ;
+BEGIN
+  SELECT is_active, deleted_at INTO v_is_active, v_deleted_at
+    FROM expense_category
+   WHERE tenant_id = NEW.tenant_id AND id = NEW.category_id;
+
+  IF NOT FOUND OR v_deleted_at IS NOT NULL THEN
+    RAISE EXCEPTION 'RB050: Referenced expense category does not exist or has been deleted';
+  END IF;
+
+  IF NOT v_is_active THEN
+    RAISE EXCEPTION 'RB051: Referenced expense category is inactive';
+  END IF;
+
+  RETURN NEW;
+END;
+$trigger$ LANGUAGE plpgsql;
+
 -- Attachments (guarded like the Gate 6 block above; names are chosen so every
 -- guard sorts before `set_updated_at` and before `recompute_*`).
 DO $$
@@ -612,5 +635,13 @@ BEGIN
       AFTER INSERT ON payment
       FOR EACH ROW EXECUTE FUNCTION payment_settle();
   END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'expense') THEN
+    DROP TRIGGER IF EXISTS expense_category_active_guard ON expense;
+    CREATE TRIGGER expense_category_active_guard
+      BEFORE INSERT OR UPDATE OF category_id ON expense
+      FOR EACH ROW EXECUTE FUNCTION check_category_active_on_expense();
+  END IF;
 END
 $$;
+
