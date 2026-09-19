@@ -47,6 +47,7 @@ function toSummary(order: OrderRow): OrderSummary {
     subtotalPaise: order.subtotalPaise,
     lineCount: order.lineCount,
     notes: order.notes,
+    billId: order.billId ?? null,
   };
 }
 
@@ -247,6 +248,18 @@ export class OrdersService {
       async (tx) => {
         const order = await this.orderRepository.lockById(tx, actor.tenantId, orderId);
         if (!order) throw new NotFoundException('Order not found.');
+
+        // Billed orders are rejected BEFORE the version check: a stale client must
+        // learn "billed" (422), not a generic version conflict, and the order was
+        // just read under FOR UPDATE so a concurrent finalize is already visible.
+        if (order.billId) {
+          throw new DomainError(
+            422,
+            'ORDER_ALREADY_BILLED',
+            'This order is already billed and its lines cannot be edited. Void its bill first.',
+            { billId: order.billId },
+          );
+        }
 
         if (order.version !== input.expectedVersion) {
           throw new DomainError(

@@ -1,8 +1,8 @@
 # Implementation Status
 
-Current Gate: Gate 6 (Orders) + Self-Service Onboarding
-Status: COMPLETE — live-verified against a real PostgreSQL 17 instance.
-Gate 7 (Kitchen) remains explicitly blocked pending onboarding review.
+Current Gate: Gate 8 (Billing + Payments, merged)
+Status: COMPLETE — verified locally against a real PostgreSQL 17 instance (fresh and upgraded).
+Gate 7 (Kitchen) is COMPLETE. Public QR ordering (Gate 11) remains unbuilt.
 
 This file is updated at the end of every gate. See the Implementation
 Blueprint (section 20, "Implementation Gates") for the full gate list and
@@ -855,3 +855,144 @@ Public-Ordering code exists anywhere in this change.
 - `/app/setup` is intentionally minimal (one step: first table) per the
   task's explicit "do not build a giant wizard" instruction — it does not
   prompt for menu items, staff invites, or settings.
+
+---
+
+## Gate 7 (Kitchen / KDS) — COMPLETE
+
+Scope: Kitchen Display System (KDS) — a dedicated high-contrast full-screen
+`KitchenLayout` (not AppShell-based), the active kitchen ticket queue, 3-second
+full active-set polling, operational ticket transitions
+(`ACCEPTED -> PREPARING -> READY`), and a front-counter acceptance badge for `NEW`
+orders when `tenant_settings.auto_accept = false`. Committed in `14fd422`.
+
+- `GET /kitchen/orders` returns active kitchen orders (`NEW`, `ACCEPTED`,
+  `PREPARING`, `READY`) with deterministic sorting.
+- Kitchen staff are limited to kitchen-safe transitions (`kitchen.transition`);
+  `NEW` orders show "Awaiting Counter Acceptance" read-only to them.
+- Removed lines render struck through from persisted server state.
+
+**Correction (made during Gate 8).** The earlier version of this section claimed
+"18/18 KDS tests green". When the Gate 7 DB suites were actually run against a fresh
+database they were red because of three test-side mistakes, none in production code:
+the specs posted `menuItemId` where the order contract requires `itemId` (400), a
+cancel call omitted the required `expectedVersion`, and a concurrency test accepted
+only `VERSION_CONFLICT` although `INVALID_TRANSITION` is an equally legitimate 409 for
+the losing racer. These were fixed in the three `gate7-kitchen-*` specs as part of
+Gate 8 (assertions were corrected, not weakened) and all three now pass.
+
+---
+
+## Gate 8 (Billing + Payments, merged) — COMPLETE, verified locally
+
+Gate 8 (billing) and Gate 9 (payments) were merged into one financial-settlement
+milestone (see the Blueprint, section 20, and Architecture ADR-029). This is the
+implementation of the reconciled, approved Gate 8 plan.
+
+### What exists
+
+- **Bills.** `bill` (DRAFT → FINALIZED → PAID | VOID, DRAFT → DISCARDED),
+  `bill_order` (retained historical association, never deleted), `bill_line`
+  (itemised snapshot, ADDON lines are their own rows keyed to `order_line_addon`) and
+  `bill_adjustment` (one discount per bill in V1). `orders.bill_id` is the
+  authoritative _current_ link, set at finalize and cleared at void.
+- **Money** is `BIGINT` paise everywhere, bounded by DB `CHECK`s to
+  `Number.MAX_SAFE_INTEGER`; the API converts `pg` strings with a checked helper and
+  fails loudly beyond that. Percent discounts round half-up; `round_to_rupee`
+  (default true) rounds the grand total half-up to the rupee (−49..+50 paise, stored on
+  the bill only). Zero-total bills are unsupported.
+- **`bill_number`** is a per-tenant monotonic `BIGINT` assigned at finalize from the
+  tenant counter. Gaps are acceptable; it is not contiguous.
+- **Payments** are INSERT-only rows (`CASH`, `UPI_STATIC`), `SUCCEEDED`, full
+  settlement only. UPI requires a 12-digit UTR unless `upi_reference_required` is off;
+  `upi_enabled` defaults to false. The `payment_settle` trigger locks the bill, sums
+  payments in a separate statement and is the _only_ writer of
+  `paid_paise`/`outstanding_paise` and the FINALIZED → PAID flip.
+- **Order freeze.** Editing, cancelling or reopening a billed order is refused
+  (`422 ORDER_ALREADY_BILLED`) by the service and, independently, by triggers on
+  `orders`, `order_line` and `order_line_addon`.
+- **Session close.** Normal close is blocked by non-terminal orders and by
+  DRAFT/FINALIZED bills; force-close (with a reason) discards drafts with an audit
+  entry and leaves FINALIZED bills payable. Sessions are never auto-closed. The floor
+  view carries live open-order / draft / unpaid counts.
+- **API.** `POST/GET /bills`, `GET /bills/:id`, `PATCH /bills/:id/adjustments`,
+  `POST /bills/:id/{finalize,discard,void}`, `POST /payments`,
+  `GET /bills/:id/payments`. Idempotency uses `canonicalJsonFingerprint` over a
+  fixed-shape object; a same-key retry returns the original with `Idempotent-Replay`,
+  a different body is `409 IDEMPOTENT_MISMATCH`.
+- **Frontend.** Bills list (status filter), bill detail (lines, signed rounding,
+  totals, payments), create bill from selected orders on the Orders screen, discount
+  panel, finalize / discard / void, payment panel (cash or UPI + UTR, amount fixed to
+  the outstanding balance), and a billed-state link/banner on orders. Uses the
+  RewardBite design system.
+
+### Deliberately NOT implemented
+
+Partial payments, refunds, payment gateways/webhooks, PENDING/FAILED/REVERSED payment
+flows, real-time payment confirmation, an accounting ledger, GST or service-charge
+engines, card payments, printing/receipts, a cash change calculator, a counter screen,
+dashboard analytics. (An earlier draft of this section described a change calculator
+and receipt view; those were removed — they are outside the locked scope.)
+
+### Database changes
+
+`V202609191400` billing settings defaults, `V202609191401` billing core,
+`V202609191402` orders bill link, `V202609191403` payments; Gate 8 sections in
+`R__grants.sql`, `R__rls_policies.sql` and `R__triggers.sql`. All new tables are
+tenant-scoped with forced RLS, composite `(tenant_id, …)` foreign keys, and grants
+of exactly what each table needs (`payment`/`bill_order` SELECT+INSERT only; `bill`
+no DELETE; `bill_line` no UPDATE; `app_public`/`app_platform` nothing).
+
+Two implementation notes worth knowing:
+
+- `payment_settle` locks the bill with **`FOR NO KEY UPDATE`**, not `FOR UPDATE` as the
+  plan text said. With `FOR UPDATE`, two concurrent raw inserters deadlocked (`40P01`):
+  each holds the payment FK's `FOR KEY SHARE` on the bill and then tries to upgrade.
+  `FOR NO KEY UPDATE` still serialises settlers and does not conflict with
+  `FOR KEY SHARE`. Reproduced, fixed, and covered by the concurrency suite.
+- `V202609191400` must lift `FORCE ROW LEVEL SECURITY` on `tenant_settings` for the
+  length of its transaction: `app_migrator` is `NOBYPASSRLS`, so the `round_to_rupee`
+  backfill and the `max_discount_bp` clamp otherwise match zero rows silently. This was
+  invisible on a fresh database and only found by the upgrade-path check below.
+
+### Verification (local PostgreSQL 17, Flyway, real NestJS app)
+
+| Check                                                                        | Result                                   |
+| ---------------------------------------------------------------------------- | ---------------------------------------- |
+| DB integration suites, all gates, fresh database (20 migrations)             | 25 suites, **284/284** passed, 0 skipped |
+| DB integration suites, all gates, **upgraded** database                      | 25 suites, **284/284** passed, 0 skipped |
+| of which Gate 8: guards / billing API / payments / concurrency               | 45 / 37 / 20 / 18                        |
+| Fresh vs upgraded schema (`pg_dump -s`)                                      | identical                                |
+| RLS coverage check (fresh and upgraded)                                      | passed, 0 violations                     |
+| Contracts (Vitest)                                                           | 62/62                                    |
+| API unit (Jest)                                                              | 19 suites, 111/111                       |
+| Web (Vitest)                                                                 | 18 files, 120/120                        |
+| `npm run lint`, `npm run format`, `npm run build`                            | clean                                    |
+| `git diff --check`                                                           | clean                                    |
+| Responsive check, headless Chrome against the real API, 390/768/1024/1440 px | no horizontal overflow on Gate 8 pages   |
+
+Upgrade path: a database was brought to the Gate 7 state using the migration files
+from `HEAD` (including the Gate 7 repeatables), seeded (two tenants, orders in every
+status, an add-on, `round_to_rupee=false`, one out-of-range `max_discount_bp`), then
+migrated to latest. Existing rows and subtotals were unchanged, `orders.bill_id` is
+NULL everywhere, `round_to_rupee` is backfilled, the bad discount cap is clamped and
+FORCE RLS is restored.
+
+Concurrency proved with real parallel connections (not mocks): finalize vs order
+edit / cancel / reopen / raw child writes, overlapping finalize (no deadlock), draft vs
+session close, duplicate-key payments, and simultaneous payments (exactly one wins).
+The `pg_trigger_depth()` authorisation is proven at DB level (a client cannot write
+settlement fields or spoof them via `set_config`).
+
+### Known limits and follow-ups
+
+- The web layer has no browser-driven end-to-end suite; the responsive check above was
+  a one-off scripted run, not a committed test.
+- CI (`.github/workflows/ci.yml`) still only tests a fresh database; the upgrade-path
+  check was run by hand and is not automated.
+- `createOrder` does not lock the table session, and `app_rw` retains DELETE on the
+  order tables (pre-existing, unchanged by Gate 8).
+- `max_discount_bp` defaults to 5000 (50%); the owner has not confirmed that default.
+- Pre-existing TypeScript errors in some test files are unrelated to Gate 8.
+- The Tables and Menu pages overflow horizontally at 390 px (pre-existing). Gate 8 fixed
+  the shared header/nav wrapping that its new "Bills" item made worse.

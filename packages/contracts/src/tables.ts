@@ -44,9 +44,10 @@ export type RegenerateQrResponse = z.infer<typeof regenerateQrResponseSchema>;
 
 // GET /tables/live — the cashier floor view (architecture section 11):
 // every table with its OPEN session (if any), open order count, and unpaid
-// bill total. `openOrderCount` / `unpaidBillTotalPaise` are wired to real
-// values once the `orders`/`billing` modules exist (Gates 6/8); until then
-// they are always 0, which is also the factually correct count today.
+// bill total. `openOrderCount` counts the session's non-terminal orders (NEW,
+// ACCEPTED, PREPARING, READY — billed-but-active orders still count);
+// `unpaidBillTotalPaise` is the sum of outstanding_paise over the session's
+// FINALIZED bills (DRAFT bills are not receivable, PAID/VOID/DISCARDED owe nothing).
 export const liveTableItemSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),

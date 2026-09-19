@@ -260,11 +260,16 @@ export class TablesService {
         tenantId,
         tables.map((t) => t.id),
       );
-      // openOrderCount / unpaidBillTotalPaise are always 0 until the
-      // orders/billing modules exist (Gates 6/8) — see the contract's own
-      // note on LiveTableItem.
+      // openOrderCount / unpaidBillTotalPaise: see the LiveTableItem contract note
+      // (non-terminal orders; outstanding of FINALIZED bills).
+      const counts = await this.sessionRepository.liveCountsForSessions(
+        tx,
+        tenantId,
+        Array.from(openSessions.values()).map((s) => s.id),
+      );
       return tables.map((table) => {
         const session = openSessions.get(table.id);
+        const live = session ? counts.get(session.id) : undefined;
         return {
           id: table.id,
           name: table.name,
@@ -275,8 +280,8 @@ export class TablesService {
             ? {
                 id: session.id,
                 openedAt: session.openedAt.toISOString(),
-                openOrderCount: 0,
-                unpaidBillTotalPaise: 0,
+                openOrderCount: live?.openOrderCount ?? 0,
+                unpaidBillTotalPaise: live?.unpaidBillTotalPaise ?? 0,
               }
             : null,
         };

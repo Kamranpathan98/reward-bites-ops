@@ -8,6 +8,7 @@ const navItems = [
   { to: '/app', label: 'Dashboard', disabled: true },
   { to: '/app/orders', label: 'Orders', permission: 'orders.read' as const },
   { to: '/app/kitchen', label: 'Kitchen', permission: 'kitchen.read' as const },
+  { to: '/app/bills', label: 'Bills', permission: 'bills.read' as const },
   { to: '/app/tables', label: 'Tables', permission: 'tables.read' as const },
   { to: '/app/menu', label: 'Menu', permission: 'menu.read' as const },
   { to: '/app/settings/users', label: 'Users', permission: 'users.read' as const },
@@ -19,10 +20,10 @@ export function AppShell(): JSX.Element {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-border px-6 py-3">
-        <div className="flex items-center gap-6">
+      <header className="flex flex-wrap items-center justify-between gap-y-2 border-b border-border px-6 py-3">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <span className="font-semibold">RewardBite</span>
-          <nav className="flex items-center gap-1">
+          <nav className="flex flex-wrap items-center gap-1">
             {navItems.map((item) =>
               item.disabled ? (
                 <span

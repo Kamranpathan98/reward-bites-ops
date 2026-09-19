@@ -7,6 +7,7 @@ export interface OrderRow {
   id: string;
   tenantId: string;
   tableSessionId: string;
+  billId: string | null;
   orderNumber: string;
   source: OrderSource;
   type: OrderType;
@@ -32,6 +33,7 @@ interface RawRow {
   id: string;
   tenant_id: string;
   table_session_id: string;
+  bill_id: string | null;
   order_number: string;
   source: OrderSource;
   type: OrderType;
@@ -58,6 +60,7 @@ function mapRow(row: RawRow): OrderRow {
     id: row.id,
     tenantId: row.tenant_id,
     tableSessionId: row.table_session_id,
+    billId: row.bill_id ?? null,
     orderNumber: row.order_number,
     source: row.source,
     type: row.type,
@@ -80,7 +83,7 @@ function mapRow(row: RawRow): OrderRow {
   };
 }
 
-const SELECT_COLUMNS = `id, tenant_id, table_session_id, order_number, source, type, customer_name,
+const SELECT_COLUMNS = `id, tenant_id, table_session_id, bill_id, order_number, source, type, customer_name,
   status, version, placed_at, accepted_at, ready_at, completed_at, cancelled_at, cancel_reason,
   cancelled_by, subtotal_paise, line_count, notes, idempotency_key, idempotency_fingerprint, created_by`;
 
@@ -207,7 +210,7 @@ export class OrderRepository {
       `UPDATE orders
           SET status = 'CANCELLED', version = version + 1, cancelled_at = now(),
               cancel_reason = $5, cancelled_by = $6
-        WHERE tenant_id = $1 AND id = $2 AND status = ANY($3::text[]) AND version = $4
+        WHERE tenant_id = $1 AND id = $2 AND status = ANY($3::text[]) AND version = $4 AND bill_id IS NULL
       RETURNING ${SELECT_COLUMNS}`,
       [
         tenantId,
@@ -232,7 +235,7 @@ export class OrderRepository {
     const result = await tx.query<RawRow>(
       `UPDATE orders
           SET status = 'ACCEPTED', version = version + 1
-        WHERE tenant_id = $1 AND id = $2 AND status = 'COMPLETED' AND version = $3
+        WHERE tenant_id = $1 AND id = $2 AND status = 'COMPLETED' AND version = $3 AND bill_id IS NULL
       RETURNING ${SELECT_COLUMNS}`,
       [tenantId, id, expectedVersion],
     );
@@ -246,6 +249,71 @@ export class OrderRepository {
       tenantId,
       id,
     ]);
+  }
+
+  /** Unlocked batch read (draft creation validates advisory state; finalize re-validates under locks). */
+  async findByIds(tx: TransactionContext, tenantId: string, ids: string[]): Promise<OrderRow[]> {
+    if (ids.length === 0) return [];
+    const result = await tx.query<RawRow>(
+      `SELECT ${SELECT_COLUMNS} FROM orders WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id ASC`,
+      [tenantId, ids],
+    );
+    return result.rows.map(mapRow);
+  }
+
+  /**
+   * Bill finalization / void lock every covered order `FOR UPDATE` in ascending
+   * id order (the deterministic lock order that prevents deadlocks between two
+   * bills that share orders). `ORDER BY id` + `FOR UPDATE` locks rows in the
+   * sorted order. This MUST be its own statement, issued before any child line
+   * is read: in READ COMMITTED every statement gets a fresh snapshot, so lines
+   * read after the lock is granted include every edit that committed while we
+   * waited for it.
+   */
+  async lockManyAscending(
+    tx: TransactionContext,
+    tenantId: string,
+    ids: string[],
+  ): Promise<OrderRow[]> {
+    if (ids.length === 0) return [];
+    const result = await tx.query<RawRow>(
+      `SELECT ${SELECT_COLUMNS} FROM orders
+        WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+        ORDER BY id ASC
+        FOR UPDATE`,
+      [tenantId, ids],
+    );
+    return result.rows.map(mapRow);
+  }
+
+  /**
+   * Finalize: point every covered order at the bill (`orders.bill_id` is the
+   * authoritative CURRENT link) and bump `version` so stale clients conflict.
+   * The DB guard (orders_billed_guard) additionally requires the bill to be
+   * DRAFT at this moment and the order not CANCELLED.
+   */
+  async linkToBill(
+    tx: TransactionContext,
+    tenantId: string,
+    orderIds: string[],
+    billId: string,
+  ): Promise<number> {
+    const result = await tx.query(
+      `UPDATE orders SET bill_id = $3, version = version + 1
+        WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND bill_id IS NULL`,
+      [tenantId, orderIds, billId],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  /** Void: clear the current link (the historical bill_order rows stay). Bumps `version`. */
+  async unlinkFromBill(tx: TransactionContext, tenantId: string, billId: string): Promise<number> {
+    const result = await tx.query(
+      `UPDATE orders SET bill_id = NULL, version = version + 1
+        WHERE tenant_id = $1 AND bill_id = $2`,
+      [tenantId, billId],
+    );
+    return result.rowCount ?? 0;
   }
 
   /**

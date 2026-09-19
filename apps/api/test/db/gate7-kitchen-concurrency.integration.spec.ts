@@ -96,7 +96,7 @@ describeIfDb(
         .send({
           type: 'TAKEAWAY',
           idempotencyKey: randomUUID(),
-          lines: [{ menuItemId: itemId, qty: 1 }],
+          lines: [{ itemId: itemId, qty: 1 }],
         });
       expect(orderRes.status).toBe(201);
       const orderId = orderRes.body.data.id;
@@ -126,7 +126,10 @@ describeIfDb(
       expect(conflicts).toHaveLength(3);
 
       for (const conflict of conflicts) {
-        expect(conflict.body.error.code).toBe('VERSION_CONFLICT');
+        // A loser that read the order before the winner committed fails the version
+        // predicate (VERSION_CONFLICT); one that read it after sees the new status
+        // and fails the state machine (INVALID_TRANSITION). Both are the intended 409.
+        expect(['VERSION_CONFLICT', 'INVALID_TRANSITION']).toContain(conflict.body.error.code);
       }
     });
   },

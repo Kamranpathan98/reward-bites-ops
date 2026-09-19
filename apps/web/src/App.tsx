@@ -1,5 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '@/routes/staff/app-shell';
+import { BillDetailPage } from '@/routes/staff/bill-detail-page';
+import { BillsPage } from '@/routes/staff/bills-page';
 import { HomePlaceholder } from '@/routes/staff/home-placeholder';
 import { LoginPage } from '@/routes/staff/login';
 import { MenuPage } from '@/routes/staff/menu-page';
@@ -25,8 +27,9 @@ import { KitchenPage } from '@/routes/staff/kitchen/kitchen-page';
  * don't exist yet — that's Gate 11. `/app/counter` (the fuller table-grid
  * + menu-picker order-taking floor view) is a later polish pass — Gate 6's
  * `/app/orders` covers list/create/detail/transition/cancel/reopen, which
- * is everything that gate's task brief asked for. Kitchen/Billing/
- * Payments/Public Ordering remain unbuilt (blocked pending Gate 7).
+ * is everything that gate's task brief asked for. Gate 7 added the kitchen
+ * display; Gate 8 adds `/app/bills` and `/app/bills/:id` (billing + cash/UPI
+ * settlement). Public Ordering remains unbuilt.
  *
  * Design System Showcase is an internal visual reference. Signed-in staff can
  * always open it at `/app/design-system`; the unauthenticated `/design-system`
@@ -60,6 +63,8 @@ export function App(): JSX.Element {
           <Route path="menu" element={<MenuPage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="orders/:id" element={<OrderDetailPage />} />
+          <Route path="bills" element={<BillsPage />} />
+          <Route path="bills/:id" element={<BillDetailPage />} />
           <Route path="design-system" element={<DesignSystemShowcase />} />
         </Route>
         {/* Dedicated full-screen KDS canvas outside standard AppShell */}

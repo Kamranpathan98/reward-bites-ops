@@ -27,6 +27,6 @@ import { OrdersService } from './orders.service';
     OrderLineAddonRepository,
     OrderStatusHistoryRepository,
   ],
-  exports: [OrderRepository, OrderLineRepository],
+  exports: [OrderRepository, OrderLineRepository, OrderLineAddonRepository],
 })
 export class OrdersModule {}

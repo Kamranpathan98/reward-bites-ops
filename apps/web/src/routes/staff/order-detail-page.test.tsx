@@ -37,6 +37,7 @@ const baseOrder = {
   cancelReason: null,
   subtotalPaise: 18000,
   lineCount: 1,
+  billId: null,
   notes: null,
   lines: [
     {
@@ -199,5 +200,24 @@ describe('OrderDetailPage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Mark accepted' }));
     expect(await screen.findByText('Already changed.')).toBeInTheDocument();
+  });
+
+  it('freezes a billed order: shows a bill link and hides remove/cancel/reopen', async () => {
+    const billed = { ...baseOrder, billId: 'bill-9' };
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === `/orders/${ORDER_ID}`) return Promise.resolve({ data: billed });
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+
+    renderPage();
+    await screen.findByText('1 × Noodles');
+    expect(screen.getByText(/This order is on a bill/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View bill' })).toHaveAttribute(
+      'href',
+      '/app/bills/bill-9',
+    );
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel order' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reopen' })).not.toBeInTheDocument();
   });
 });

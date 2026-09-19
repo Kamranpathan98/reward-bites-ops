@@ -45,6 +45,7 @@ const baseOrder: OrderRow = {
   subtotalPaise: 5000,
   lineCount: 1,
   notes: null,
+  billId: null,
   idempotencyKey: 'key-1',
   idempotencyFingerprint: 'fingerprint-1',
   createdBy: 'user-1',
@@ -201,5 +202,32 @@ describe('OrderTransitionService.cancel', () => {
     await expect(
       service.cancel(actor, 'order-1', { expectedVersion: 0, reason: 'x' }),
     ).rejects.toThrow('already COMPLETED and cannot be cancelled');
+  });
+
+  it('rejects cancelling an order that is already billed', async () => {
+    const { service } = makeService({
+      orderRepository: {
+        lockById: jest.fn().mockResolvedValue({ ...baseOrder, status: 'NEW', billId: 'bill-123' }),
+      },
+    });
+    await expect(
+      service.cancel(actor, 'order-1', { expectedVersion: 0, reason: 'x' }),
+    ).rejects.toMatchObject({ status: 422, response: { code: 'ORDER_ALREADY_BILLED' } });
+  });
+});
+
+describe('OrderTransitionService.reopen', () => {
+  it('rejects reopening an order that is already billed', async () => {
+    const { service } = makeService({
+      orderRepository: {
+        lockById: jest
+          .fn()
+          .mockResolvedValue({ ...baseOrder, status: 'CANCELLED', billId: 'bill-123' }),
+      },
+    });
+    await expect(service.reopen(actor, 'order-1', { expectedVersion: 0 })).rejects.toMatchObject({
+      status: 422,
+      response: { code: 'ORDER_ALREADY_BILLED' },
+    });
   });
 });

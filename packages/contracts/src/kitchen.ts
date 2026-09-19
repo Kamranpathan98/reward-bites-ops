@@ -56,4 +56,3 @@ export const kitchenOrdersQuerySchema = z.object({
     .optional(),
 });
 export type KitchenOrdersQuery = z.infer<typeof kitchenOrdersQuerySchema>;
-

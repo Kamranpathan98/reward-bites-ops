@@ -72,6 +72,7 @@ const ordersList = {
       cancelReason: null,
       subtotalPaise: 18000,
       lineCount: 1,
+      billId: null,
       notes: null,
     },
   ],
@@ -182,5 +183,51 @@ describe('OrdersPage', () => {
         }),
       );
     });
+  });
+
+  it('shows a Billed link for a billed order and disables its checkbox', async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === '/menu') return Promise.resolve(emptyMenu);
+      if (path === '/tables') return Promise.resolve(emptyTables);
+      if (path.startsWith('/orders'))
+        return Promise.resolve({
+          data: [{ ...ordersList.data[0], billId: 'bill-9' }],
+          meta: { nextCursor: null },
+        });
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+
+    renderPage();
+    expect(await screen.findByRole('link', { name: 'Billed' })).toHaveAttribute(
+      'href',
+      '/app/bills/bill-9',
+    );
+    expect(screen.getByRole('checkbox', { name: /Select order #0001/ })).toBeDisabled();
+  });
+
+  it('creates a bill from the selected orders of one session', async () => {
+    apiFetchMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/menu') return Promise.resolve(emptyMenu);
+      if (path === '/tables') return Promise.resolve(emptyTables);
+      if (path === '/bills' && options?.method === 'POST')
+        return Promise.resolve({ data: { id: 'bill-new' } });
+      if (path.startsWith('/orders')) return Promise.resolve(ordersList);
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('checkbox', { name: /Select order #0001/ }));
+    await user.click(screen.getByRole('button', { name: 'Create bill from 1 order' }));
+
+    await waitFor(() =>
+      expect(apiFetchMock).toHaveBeenCalledWith(
+        '/bills',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.objectContaining({ sessionId: 'session-1', orderIds: [ORDER_ID] }),
+        }),
+      ),
+    );
   });
 });

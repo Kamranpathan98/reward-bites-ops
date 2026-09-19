@@ -139,7 +139,7 @@ describeIfDb('Gate 7 vertical journey — Kitchen / KDS (real API + real Postgre
         idempotencyKey: randomUUID(),
         lines: [
           {
-            menuItemId: itemId,
+            itemId: itemId,
             qty: 2,
             notes: 'Less oil',
             addons: [{ addonId, qty: 1 }],
@@ -159,7 +159,7 @@ describeIfDb('Gate 7 vertical journey — Kitchen / KDS (real API + real Postgre
         idempotencyKey: randomUUID(),
         lines: [
           {
-            menuItemId: itemId,
+            itemId: itemId,
             qty: 1,
           },
         ],
@@ -213,7 +213,7 @@ describeIfDb('Gate 7 vertical journey — Kitchen / KDS (real API + real Postgre
       .send({
         expectedVersion: ticket1.version,
         reason: 'Guest changed mind',
-        add: [{ menuItemId: itemId, qty: 1 }],
+        add: [{ itemId: itemId, qty: 1 }],
         remove: [lineId],
       });
     expect(editRes.status).toBe(200);
@@ -270,7 +270,7 @@ describeIfDb('Gate 7 vertical journey — Kitchen / KDS (real API + real Postgre
     const cancelRes = await request(app.getHttpServer())
       .post(`/api/v1/orders/${t2.id}/cancel`)
       .set('Authorization', `Bearer ${ownerToken}`)
-      .send({ reason: 'Customer left' });
+      .send({ reason: 'Customer left', expectedVersion: t2.version });
     expect(cancelRes.status).toBe(200);
 
     // Kitchen queue should now be empty

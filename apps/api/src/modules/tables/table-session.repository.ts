@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { TransactionContext } from '../../common/db';
+import { toPaise } from '../../common/money/paise';
 import { newId } from '../../common/security/id';
 
 export interface TableSessionRow {
@@ -66,6 +67,25 @@ export class TableSessionRepository {
   ): Promise<TableSessionRow | null> {
     const result = await tx.query<RawRow>(
       `SELECT ${SELECT_COLUMNS} FROM table_session WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+      [tenantId, id],
+    );
+    const row = result.rows[0];
+    return row ? mapRow(row) : null;
+  }
+
+  /**
+   * `FOR SHARE` session lock, taken by bill-draft creation. Several drafts can
+   * hold it at once, but it conflicts with session close's `FOR UPDATE`: a
+   * draft can never be created on a session that is being closed, and a close
+   * always sees the drafts that were created before it.
+   */
+  async lockSharedById(
+    tx: TransactionContext,
+    tenantId: string,
+    id: string,
+  ): Promise<TableSessionRow | null> {
+    const result = await tx.query<RawRow>(
+      `SELECT ${SELECT_COLUMNS} FROM table_session WHERE tenant_id = $1 AND id = $2 FOR SHARE`,
       [tenantId, id],
     );
     const row = result.rows[0];
@@ -152,5 +172,111 @@ export class TableSessionRepository {
         WHERE tenant_id = $1 AND id = $2`,
       [tenantId, id, forceClosed],
     );
+  }
+
+  // --------------------------------------------------------------------------
+  // Gate 8: what a session's orders and bills mean for closing it, and for the
+  // cashier floor view. These are narrow, tenant-scoped reads/writes of the
+  // `orders` and `bill` tables kept local to this repository: `tables` sits
+  // below `billing` in the module graph, so importing the billing repository
+  // here would create a cycle (same precedent as OrderRepository.getOrdersWorkflow).
+  // --------------------------------------------------------------------------
+
+  /**
+   * Blockers for a NORMAL close: non-terminal orders (NEW, ACCEPTED, PREPARING,
+   * READY), DRAFT bills, and FINALIZED (unpaid) bills. PAID / VOID / DISCARDED
+   * bills and COMPLETED / CANCELLED orders never block.
+   */
+  async countClosureBlockers(
+    tx: TransactionContext,
+    tenantId: string,
+    sessionId: string,
+  ): Promise<{ openOrders: number; draftBills: number; unpaidBills: number }> {
+    const orders = await tx.query<{ n: string }>(
+      `SELECT count(*) AS n FROM orders
+        WHERE tenant_id = $1 AND table_session_id = $2
+          AND status IN ('NEW', 'ACCEPTED', 'PREPARING', 'READY')`,
+      [tenantId, sessionId],
+    );
+    const bills = await tx.query<{ status: string; n: string }>(
+      `SELECT status, count(*) AS n FROM bill
+        WHERE tenant_id = $1 AND table_session_id = $2 AND status IN ('DRAFT', 'FINALIZED')
+        GROUP BY status`,
+      [tenantId, sessionId],
+    );
+    const byStatus = new Map(bills.rows.map((r) => [r.status, toPaise(r.n, 'bill count')]));
+    return {
+      openOrders: toPaise(orders.rows[0]?.n ?? '0', 'order count'),
+      draftBills: byStatus.get('DRAFT') ?? 0,
+      unpaidBills: byStatus.get('FINALIZED') ?? 0,
+    };
+  }
+
+  /**
+   * Force-close: release every DRAFT bill of the session by DISCARDing it (a
+   * draft never links orders, so no order is touched). Locks the drafts in
+   * ascending id order AFTER the session lock (session -> bill lock order).
+   * Returns the discarded bill ids for auditing.
+   */
+  async discardDraftBills(
+    tx: TransactionContext,
+    tenantId: string,
+    sessionId: string,
+  ): Promise<string[]> {
+    const drafts = await tx.query<{ id: string }>(
+      `SELECT id FROM bill
+        WHERE tenant_id = $1 AND table_session_id = $2 AND status = 'DRAFT'
+        ORDER BY id ASC
+        FOR UPDATE`,
+      [tenantId, sessionId],
+    );
+    const ids = drafts.rows.map((r) => r.id);
+    if (ids.length === 0) return [];
+    await tx.query(
+      `UPDATE bill SET status = 'DISCARDED', version = version + 1
+        WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND status = 'DRAFT'`,
+      [tenantId, ids],
+    );
+    return ids;
+  }
+
+  /**
+   * `GET /tables/live` counts for the given OPEN sessions.
+   *  - openOrderCount: the session's non-terminal orders (NEW/ACCEPTED/PREPARING/READY),
+   *    including orders that are already billed but still operationally active.
+   *  - unpaidBillTotalPaise: SUM(outstanding_paise) of the session's FINALIZED bills
+   *    (DRAFT is not receivable; PAID/VOID/DISCARDED owe nothing).
+   * SUM() comes back as a numeric string, hence the checked conversion.
+   */
+  async liveCountsForSessions(
+    tx: TransactionContext,
+    tenantId: string,
+    sessionIds: string[],
+  ): Promise<Map<string, { openOrderCount: number; unpaidBillTotalPaise: number }>> {
+    const counts = new Map<string, { openOrderCount: number; unpaidBillTotalPaise: number }>();
+    if (sessionIds.length === 0) return counts;
+    const orders = await tx.query<{ table_session_id: string; n: string }>(
+      `SELECT table_session_id, count(*) AS n FROM orders
+        WHERE tenant_id = $1 AND table_session_id = ANY($2::uuid[])
+          AND status IN ('NEW', 'ACCEPTED', 'PREPARING', 'READY')
+        GROUP BY table_session_id`,
+      [tenantId, sessionIds],
+    );
+    const bills = await tx.query<{ table_session_id: string; total: string }>(
+      `SELECT table_session_id, SUM(outstanding_paise) AS total FROM bill
+        WHERE tenant_id = $1 AND table_session_id = ANY($2::uuid[]) AND status = 'FINALIZED'
+        GROUP BY table_session_id`,
+      [tenantId, sessionIds],
+    );
+    for (const id of sessionIds) counts.set(id, { openOrderCount: 0, unpaidBillTotalPaise: 0 });
+    for (const row of orders.rows) {
+      const entry = counts.get(row.table_session_id);
+      if (entry) entry.openOrderCount = toPaise(row.n, 'open order count');
+    }
+    for (const row of bills.rows) {
+      const entry = counts.get(row.table_session_id);
+      if (entry) entry.unpaidBillTotalPaise = toPaise(row.total, 'unpaid bill total');
+    }
+    return counts;
   }
 }

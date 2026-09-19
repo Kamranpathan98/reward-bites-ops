@@ -78,6 +78,8 @@ export const orderSummarySchema = z.object({
   cancelReason: z.string().nullable(),
   subtotalPaise: z.number().int(),
   lineCount: z.number().int(),
+  /** The CURRENT bill (orders.bill_id); NULL = unbilled. Set at finalize, cleared at void. */
+  billId: z.string().uuid().nullable(),
   notes: z.string().nullable(),
 });
 export type OrderSummary = z.infer<typeof orderSummarySchema>;

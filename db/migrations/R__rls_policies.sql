@@ -28,6 +28,11 @@
 -- clean NULL — which then makes the whole comparison NULL (i.e. no match,
 -- fail-closed), never a thrown error.
 
+-- Gate 8 (billing_core, payments): bill, bill_order, bill_line,
+-- bill_adjustment and payment all pick up the plain generic policy below
+-- (tenant_id = app.tenant_id, USING + WITH CHECK, forced) — none needs a
+-- bespoke policy. This comment is also the checksum-bump touch Flyway needs
+-- to re-run the dynamic loop for the new tables.
 DO $$
 DECLARE
   rec RECORD;

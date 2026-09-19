@@ -189,9 +189,10 @@ Flyway naming: `V<yyyyMMddHHmm>__<snake_description>.sql` for versioned migratio
 | 3 | `V..._tables_qr_sessions` | `restaurant_table`, `table_qr_token`, `table_session` | tenant_core | `UNIQUE (tenant_id, name) WHERE deleted_at IS NULL` on table; `UNIQUE token` + `UNIQUE (tenant_id, table_id) WHERE status='ACTIVE'` on QR token; partial unique `(tenant_id, table_id) WHERE status='OPEN' AND table_id IS NOT NULL` on session |
 | 4 | `V..._menu_catalog` | `menu_category`, `menu_item`, `menu_variant`, `menu_addon`, `menu_item_addon` | tenant_core | per-table `UNIQUE (tenant_id, ...) WHERE deleted_at IS NULL`; composite tenant FKs throughout |
 | 5 | `V..._orders_core` | `orders` **(no `bill_id` yet)**, `order_line`, `order_line_addon`, `order_status_history` | tables_qr_sessions, menu_catalog, tenant_counter | `UNIQUE (tenant_id, idempotency_key)` on orders; CHECK on `status`/`source`/`type`; CHECK `qty > 0` on `order_line`; append-only intent on `order_status_history` (grant enforced in stage 12) |
-| 6 | `V..._billing_core` | `bill`, `bill_order`, `bill_line`, `bill_adjustment` | orders_core (references `orders(id)`), tables_qr_sessions (references `table_session`) | `UNIQUE (tenant_id, bill_number)`; CHECK `grand_total = subtotal - discount + tax + service + delivery + rounding`; CHECK `outstanding_paise = grand_total_paise - paid_paise`, CHECK `paid_paise <= grand_total_paise` |
-| 6 | `V..._orders_bill_link` | `ALTER TABLE orders ADD COLUMN bill_id ... REFERENCES bill(id)` | billing_core | closes the `orders` ↔ `bill` cycle; this is the only place `orders` is altered post-creation in the initial build |
-| 7 | `V..._payments` | `payment` | billing_core | `UNIQUE (tenant_id, idempotency_key)`; CHECK `amount_paise > 0`; CHECK `status IN ('PENDING','SUCCEEDED','FAILED','REVERSED')` (REVERSED reserved, no code path) |
+| 6 | `V..._billing_settings_defaults` | `tenant_settings.round_to_rupee` default `true` (+ backfill), `CHECK (max_discount_bp BETWEEN 0 AND 10000)` | tenant_core | canonical V1 rounding default (architecture section 9) |
+| 6 | `V..._billing_core` | `bill`, `bill_order`, `bill_line`, `bill_adjustment`; `UNIQUE (tenant_id, order_id, id)` added to `order_line` | orders_core, tables_qr_sessions | all FKs composite `(tenant_id, ...)` with default NO ACTION (never CASCADE / SET NULL); `bill_number BIGINT`, `UNIQUE (tenant_id, bill_number)`; `bill.idempotency_key`/`fingerprint`, `UNIQUE (tenant_id, idempotency_key)`; CHECK `grand_total = subtotal - discount + tax + service + delivery + rounding` (tax/service/delivery = 0 in V1), `outstanding = grand - paid`, `paid <= grand`, `rounding BETWEEN -49 AND 50`, `status = 'PAID' => outstanding = 0`, `status IN ('FINALIZED','PAID','VOID') => grand > 0`, all money `<= 9007199254740991`; `bill_line.line_kind IN ('ITEM','ADDON')` with `line_total = qty * unit_price`; partial unique on `bill_adjustment` for at most one discount |
+| 6 | `V..._orders_bill_link` | `ALTER TABLE orders ADD COLUMN bill_id`, composite FK `(tenant_id, bill_id)` -> `bill`, reverse composite FK `(tenant_id, bill_id, id)` -> `bill_order` | billing_core | closes the `orders` <-> `bill` cycle; the reverse FK enforces `orders.bill_id = X => the order is a member of X`; this is the only place `orders` is altered post-creation in the initial build |
+| 7 | `V..._payments` | `payment` (INSERT-only ledger: no `updated_at`; `UPDATE`/`DELETE` revoked from `app_rw`) | billing_core | `UNIQUE (tenant_id, idempotency_key)`; CHECK `amount_paise > 0`; CHECK `method IN ('CASH','UPI_STATIC')`; CHECK `status IN ('PENDING','SUCCEEDED','FAILED','REVERSED')` (all but SUCCEEDED reserved, no V1 code path); no cash-tendered column (change-giving is a UI calculation) |
 | 8 | `V..._expenses` | `expense_category`, `expense` | tenant_core | `UNIQUE (tenant_id, name) WHERE deleted_at IS NULL` on category; index `(tenant_id, expense_date)` on expense |
 | 9 | `V..._audit_and_support` | `audit_event`, `public_rate_limit`, `image_asset` | tenant_core (audit_event references tenant loosely, no FK to entity — deliberately polymorphic) | index `(tenant_id, entity_type, entity_id)`, `(tenant_id, at)` on audit_event; `public_rate_limit` carries no `tenant_id` |
 | 10 | `R__rls_policies` (repeatable) | Enable + **FORCE** RLS on every table with `tenant_id`; one `USING` + one `WITH CHECK` policy each | every table stage above | re-runs on any change; CI coverage query (`pg_tables` ⋈ `pg_policies`) fails the build if any tenant table lacks a policy |
@@ -241,6 +242,8 @@ Three tiers, kept distinct throughout: **DB-enforced** (Postgres itself refuses 
 | At most one `OPEN` session per table | DB-enforced (partial unique index `(tenant_id, table_id) WHERE status='OPEN'`) |
 | `session_token` uniqueness | DB-enforced (unique constraint) |
 | Session auto-closure ("every order COMPLETED/CANCELLED and every bill PAID/VOID/DISCARDED") | Transactional service invariant — not a DB constraint, evaluated in the closing transaction |
+| Session close blockers | Transactional service invariant: normal close rejected with 409 if any orders are active (`NEW`, `ACCEPTED`, `PREPARING`, `READY`) or any bills are `DRAFT` or `FINALIZED`. Force-close with mandatory reason bypasses blockers, transitions `DRAFT` bills to `DISCARDED` (with audit), and leaves `FINALIZED` bills payable/voidable. |
+| Draft creation locks session `FOR SHARE` | Transactional service invariant: ensures draft creation and session closure serialize cleanly. |
 | "Stale session" warning banner after `stale_session_hours` | UI-only |
 
 ### Bills
@@ -249,12 +252,20 @@ Three tiers, kept distinct throughout: **DB-enforced** (Postgres itself refuses 
 | --- | --- |
 | `grand_total = subtotal - discount + tax + service + delivery + rounding` | DB-enforced (CHECK) |
 | `outstanding = grand_total - paid`, `paid <= grand_total` | DB-enforced (CHECK) |
-| Finalized bill's `bill_line`/`bill_adjustment`/totals immutable; only `status`/`version`/`voided_*`/`updated_at`/`paid_paise`/`outstanding_paise` may change post-finalize | DB-enforced (`BEFORE UPDATE` trigger whitelist) |
+| Finalized bill's `bill_line`/`bill_adjustment`/`bill_order`/totals immutable; post-finalize only `status`→VOID + `voided_*`/`version` may change through the service, and `paid_paise`/`outstanding_paise`/the FINALIZED→PAID edge only through the payment settlement trigger (`pg_trigger_depth() > 1`) | DB-enforced (`bill_guard` BEFORE trigger: column whitelist per state + legal status edges; `bill_child_guard` requires a DRAFT parent) |
 | `bill_number` uniqueness, assigned only at finalize | DB-enforced (unique constraint) |
 | An order belongs to at most one live bill | DB-enforced (`orders.bill_id` structural, set/cleared under row lock) |
 | `orders.bill_id` and `bill_order` membership agree for FINALIZED/PAID bills | Transactional service invariant (both written/cleared in the same finalize/void transaction — no single DB constraint spans both tables) |
 | Lock ordering at finalize: bill row first, then covered orders `FOR UPDATE` in ascending id order | Transactional service invariant |
 | `PAID → VOID` does not exist | DB-enforced (CHECK on the status transition set / no code path emits it) |
+| Snapshot immutability vs DB-owned settlement fields | DB-enforced (`BEFORE UPDATE` trigger on `bill` using `pg_trigger_depth()`): financial snapshot columns (`subtotal`, `discount`, `tax`, `service`, `delivery`, `rounding`, `grand_total`, `bill_number`) and line items are strictly immutable once `FINALIZED`. Settlement fields (`paid_paise`, `outstanding_paise`, and transition to `PAID`) are updated exclusively by the payment settlement trigger at trigger depth > 1. |
+| `bill_number` uniqueness, assigned only at finalize | DB-enforced (unique constraint); monotonically increasing per tenant, gaps acceptable. |
+| Active bill ownership via `orders.bill_id` | DB-enforced (`orders.bill_id` structural, set at finalize under ascending row locks, cleared to `NULL` at void). |
+| `bill_order` historical retention | DB-enforced: `bill_order` records covered orders for drafts and finalized bills. Rows are retained forever even if the bill is voided (historical audit record). An order's active billing status is determined exclusively by `orders.bill_id IS NOT NULL`. |
+| Reverse FK & composite provenance | DB-enforced: `orders` has tenant-scoped FK to `bill(tenant_id, id)` and reverse FK reference to `bill_order`. `order_line` has `UNIQUE (tenant_id, order_id, id)` for composite provenance FKs from `bill_line`. |
+| Finalize lock ordering & version guard | Transactional service invariant: locks bill `FOR UPDATE`, verifies `expectedVersion`, locks covered orders in ascending ID order `FOR UPDATE`, re-derives active order lines, verifies `expectedGrandTotalPaise`, allocates monotonic `bill_number`, and sets `orders.bill_id` while incrementing `orders.version`. |
+| `PAID → VOID` does not exist | DB-enforced (CHECK / trigger rejects status changes from `PAID`). |
+| Bill creation idempotency | Enforced on `(tenant_id, idempotency_key)` using `canonicalJsonFingerprint` with sorted order IDs. |
 
 ### Payments
 
@@ -263,9 +274,14 @@ Three tiers, kept distinct throughout: **DB-enforced** (Postgres itself refuses 
 | `amount_paise > 0` | DB-enforced (CHECK) |
 | Idempotency on `(tenant_id, idempotency_key)` | DB-enforced (unique constraint) |
 | `PENDING → SUCCEEDED/FAILED`, `SUCCEEDED → REVERSED` (reserved, unused) as the only legal status set | DB-enforced (CHECK) |
-| `paid_paise`/`outstanding_paise` recomputed from `SUM(SUCCEEDED)` | DB-enforced (`AFTER INSERT OR UPDATE ON payment` trigger) |
+| `paid_paise`/`outstanding_paise` recomputed from `SUM(SUCCEEDED)`, bill flips to PAID when outstanding = 0 | DB-enforced (`AFTER INSERT ON payment` trigger only: locks the bill `FOR NO KEY UPDATE`, then sums in a SEPARATE statement — see architecture ADR-029) |
 | No overpayment (`paid + amount <= grand_total`); full-settlement-only unless `payments.allow_partial` | Transactional service invariant (service asserts before insert, inside the bill row lock) |
 | Nightly drift re-check of `paid = SUM(succeeded)` across all bills | DB-enforced check, service-triggered on a schedule (belt-and-braces, not relied on for correctness) |
+| Idempotency on `(tenant_id, idempotency_key)` | DB-enforced (unique constraint) with canonical request fingerprint. |
+| INSERT-only payment records | DB-enforced: `UPDATE` and `DELETE` revoked from `app_rw`. No `updated_at` column. |
+| V1 status is `SUCCEEDED` | In V1, recorded payments are inserted directly as `SUCCEEDED`. `PENDING`/`FAILED` are reserved in enum for future dynamic gateways. |
+| DB-owned settlement trigger | DB-enforced (`AFTER INSERT ON payment` trigger): row-locks `bill FOR UPDATE`, performs separate `SUM(amount_paise)` over succeeded payments, recomputes `paid_paise` and `outstanding_paise`, and transitions `status = 'PAID'` when outstanding is 0. |
+| Full-settlement-only in V1 | Transactional service invariant: `amount_paise == bill.outstanding_paise`. Partial payment (`422 PARTIAL_PAYMENT_NOT_ENABLED`) and overpayment (`422 OVERPAYMENT`) are strictly rejected. |
 
 ### Audit
 
@@ -374,7 +390,7 @@ Fifteen phases, each gated by the prerequisite phase's exit criteria (see sectio
 | 5. Orders | Counter + order state machine, edit, cancel | Phases 3, 4 | orders_core migration | `orders` | `/orders/*` (excl. public) | counter POS, order detail | unit (state machine), integration (line-total trigger), concurrency (version conflicts) | `customer_name_required` decision (2A) resolved; full order lifecycle testable from the counter |
 | 6. Kitchen | KDS read model, kitchen transitions | Phase 5 | — (reads orders) | `kitchen` | `/kitchen/orders?since=` | KDS screen (flag-gated) | API (permission matrix for kitchen role) | Cursor polling returns only changed rows |
 | 7. Billing | Draft/finalize/void, discounts | Phase 5 | billing_core + orders_bill_link migrations | `billing` | `/bills/*` | bill drawer | integration (finalize lock ordering, immutability trigger), concurrency (double finalize) | Discount cap decision (2A) confirmed; `orders.bill_id`/`bill_order` consistency test passes |
-| 8. Payments | Cash/UPI record, settlement | Phase 7 | payments migration | `payments` | `/payments`, `GET /bills/:id/payments` | payment dialog | integration (payment trigger, overpayment rejection), concurrency (duplicate payment) | UTR-required default (2B) shipped as-is; `paid = SUM(succeeded)` holds under concurrent test |
+| 8. Payments (delivered inside Gate 8, see ADR-030) | Cash/UPI record, settlement | Phase 7 | payments migration | `payments` | `/payments`, `GET /bills/:id/payments` | payment dialog | integration (payment trigger, overpayment rejection), concurrency (duplicate payment) | UTR-required default (2B) shipped as-is; `paid = SUM(succeeded)` holds under concurrent test |
 | 9. Expenses | CRUD, categories | Phase 2 | expenses migration | `expenses` | `/expenses/*`, `/expense-categories/*` | expenses screen | unit + API | Nine default categories seeded at tenant creation |
 | 10. Dashboard / Reporting | Aggregates, breakdowns | Phases 7, 8, 9 | — (reads only) | `reporting` | `/dashboard/*` | dashboard | API (metric correctness against seed fixture) | Business-day boundary (04:00 default) correctly attributes a 1 a.m. bill |
 | 11. Audit hardening | Append-only audit on every mutating path, retention cron | Phases 2–10 | audit_and_support migration | `audit` | `/audit` | audit log view | integration (append-only grant test) | Retention-window decision (2A) confirmed; nightly cron nulls customer names correctly |
@@ -397,11 +413,11 @@ Organized by the phase that first requires each endpoint (no new endpoints inven
 | 3 | `POST /tables/:id/qr/regenerate` | — | — | revoke old + insert new token | one `ACTIVE` token per table | — |
 | 3 | `POST /sessions/:id/close` | — | — | lock session | no unpaid bills unless forced | 409 |
 | 5 | `POST /orders` | ✔ | — (create) | lock counter row, insert order + lines | `priceLine()` re-validated availability | 422 `ITEM_UNAVAILABLE` |
-| 5 | `PATCH /orders/:id/lines` | — | ✔ | `SELECT ... FOR UPDATE` on order | edit gating by status | 409 (version/billed) |
+| 5 | `PATCH /orders/:id/lines` | — | ✔ | `SELECT ... FOR UPDATE` on order | billed orders are rejected BEFORE the version check; edit gating by status | 422 `ORDER_ALREADY_BILLED` (billed), 409 (version) |
 | 5 | `POST /orders/:id/transition` | — | ✔ | conditional `UPDATE ... WHERE status=$from AND version=$v` | state machine legality | 409 |
 | 7 | `POST /bills` | ✔ | — (create) | insert draft + copy lines | orders belong to the same session | — |
 | 7 | `POST /bills/:id/finalize` | — | ✔ | lock bill, lock orders (ascending id), re-copy lines | `expectedGrandTotalPaise` match; `orders.bill_id`/`bill_order` written together | 409 (totals moved), 422 `ORDER_ALREADY_BILLED` |
-| 7 | `POST /bills/:id/void` | — | ✔ | lock bill, clear `orders.bill_id`, delete `bill_order` rows | 409 if `PAID` | 409 |
+| 7 | `POST /bills/:id/void` | — | ✔ | lock bill, lock orders (ascending id), clear `orders.bill_id` (`bill_order` history is RETAINED) | FINALIZED only, reason required, refused if any money paid | 409 `BILL_NOT_VOIDABLE` / `BILL_HAS_PAYMENTS` |
 | 8 | `POST /payments` | ✔ | ✔ (`expectedBillVersion`) | lock bill | `amount = outstanding` unless partial enabled | 422 `OVERPAYMENT`/`PARTIAL_PAYMENT_NOT_ENABLED`, 409 (not FINALIZED) |
 | 9 | `POST /expenses` | ✔ | — | insert | `expense_date` in tenant timezone | — |
 | 12 | `POST /p/:qrToken/orders` | ✔ | — | `app_public` resolves token, then `app_rw` inside `withTenantTx` | rate limit + `max_open_orders_per_table` | 404 (closed session/revoked token), 422 |
@@ -459,9 +475,12 @@ COMMIT
 **6. Create bill**
 ```text
 BEGIN
-  VALIDATE  orderIds belong to the same session, none already billed
-  MUTATE INSERT bill (DRAFT), bill_order rows, bill_line copies, computeBillTotals()
-  AUDIT  audit_event('bill.drafted')
+  LOOKUP idempotency key (inside the transaction): replay or IDEMPOTENT_MISMATCH
+  LOCK   table_session row FOR SHARE            -- serializes against session close (FOR UPDATE)
+  VALIDATE  session OPEN; every order in that session, not CANCELLED, bill_id IS NULL
+  MUTATE INSERT bill (DRAFT), bill_order rows, bill_line snapshot (ITEM + ADDON rows), computeBillTotals()
+  -- a DRAFT does NOT set orders.bill_id: several drafts per session (even over one order) are allowed
+  AUDIT  audit_event('created')
 COMMIT
 ```
 
@@ -470,12 +489,13 @@ COMMIT
 BEGIN
   LOCK   bill row FOR UPDATE
   LOCK   each covered order FOR UPDATE, in ascending order-id order  -- deterministic lock order
-  VALIDATE  each order.bill_id IS NULL and not CANCELLED
-  MUTATE re-copy lines from current order_line (draft may be stale)
-  VALIDATE  resulting grand_total == expectedGrandTotalPaise
-  MUTATE assign bill_number (tenant_counter FOR UPDATE), set bill.status=FINALIZED
-  MUTATE set orders.bill_id for every covered order  -- same transaction as bill_order writes
-  AUDIT  audit_event('bill.finalized')
+  VALIDATE  each order.bill_id IS NULL, not CANCELLED, same session
+  READ   active order lines/add-ons ONLY NOW (after the parent locks; READ COMMITTED gives every statement a fresh snapshot)
+  MUTATE re-copy the bill_line snapshot (draft may be stale); recompute subtotal -> discount -> rounding
+  VALIDATE  resulting grand_total == expectedGrandTotalPaise and grand_total > 0
+  MUTATE assign bill_number (tenant_counter, late), set orders.bill_id + orders.version for every covered order
+  MUTATE bill.status = FINALIZED  -- bill_guard re-checks lines/discount sums and that every member order points back
+  AUDIT  audit_event('finalized')
 COMMIT
 DOMAIN EVENT  BillFinalized
 ```
@@ -484,21 +504,23 @@ DOMAIN EVENT  BillFinalized
 ```text
 BEGIN
   LOCK   bill row FOR UPDATE
-  VALIDATE  status == FINALIZED (never PAID)
-  MUTATE clear orders.bill_id for every covered order  -- same transaction as bill_order deletion
-  MUTATE DELETE bill_order rows for this bill; bill.status → VOID
-  AUDIT  audit_event('bill.voided', reason)
+  VALIDATE  status == FINALIZED (never PAID), reason non-empty, paid_paise == 0
+  LOCK   covered orders FOR UPDATE in ascending id order
+  MUTATE clear orders.bill_id (+ orders.version) for every covered order
+  MUTATE bill.status → VOID  -- bill_order rows are RETAINED (historical association); the snapshot is untouched
+  AUDIT  audit_event('voided', reason)
 COMMIT
 ```
 
 **9. Record payment**
 ```text
 BEGIN
-  LOCK   bill row FOR UPDATE (expectedBillVersion checked)
-  VALIDATE  status == FINALIZED; amount == outstanding (or partial rule)
-  MUTATE INSERT payment (status=SUCCEEDED)  -- trigger recomputes paid_paise/outstanding_paise
-  MUTATE if outstanding == 0: bill.status → PAID
-  AUDIT  audit_event('payment.recorded')
+  LOCK   bill row FOR UPDATE
+  LOOKUP idempotency key INSIDE the transaction, after the lock: same fingerprint => replay, different => IDEMPOTENT_MISMATCH
+  VALIDATE  status == FINALIZED; expectedBillVersion; method; UPI reference; amount == outstanding
+  MUTATE INSERT payment (status=SUCCEEDED, INSERT-only)
+  TRIGGER payment_settle (AFTER INSERT): lock bill FOR NO KEY UPDATE, SUM(SUCCEEDED) in a separate statement, update paid/outstanding, status → PAID when outstanding == 0
+  AUDIT  audit_event('recorded')
 COMMIT
 DOMAIN EVENT  PaymentRecorded
 ```
@@ -507,7 +529,8 @@ DOMAIN EVENT  PaymentRecorded
 ```text
 BEGIN
   LOCK   table_session row FOR UPDATE
-  VALIDATE  every order COMPLETED/CANCELLED and every bill PAID/VOID/DISCARDED, or force-close reason present
+  VALIDATE  every order COMPLETED/CANCELLED and every bill DISCARDED/PAID/VOID (DRAFT and FINALIZED block), else 409 SESSION_HAS_OPEN_ORDERS / SESSION_HAS_DRAFT_BILLS / SESSION_HAS_UNPAID_BILLS
+  FORCE  (reason present) bypasses the blockers, DISCARDs the session's DRAFT bills (audited); FINALIZED bills stay payable/voidable
   MUTATE status → CLOSED, closed_at
   AUDIT  audit_event('session.closed')
 COMMIT
@@ -536,7 +559,7 @@ COMMIT
 
 - **Scope:** every create endpoint for `orders`, `bill` finalize, `payments`, `expenses`.
 - **Fingerprint:** SHA-256 of the canonical (key-sorted) JSON request body, stored alongside the key as `idempotency_fingerprint`.
-- **Constraint:** `UNIQUE (tenant_id, idempotency_key)` on the target table (`orders`, `payment`, `expense`); bill finalize reuses the bill's own `idempotency_key`/version semantics rather than a separate table.
+- **Constraint:** `UNIQUE (tenant_id, idempotency_key)` on the target table (`orders`, `payment`, `expense`); `POST /bills` carries its own `idempotency_key`/`idempotency_fingerprint` on `bill`; finalize, void, discard and discount are version-guarded rather than key-guarded (a retry after success is a 409 `VERSION_CONFLICT` carrying the current bill). Payment idempotency is looked up INSIDE the transaction after the bill lock (a same-key retry after success would otherwise fail the FINALIZED check before reaching the insert).
 - **Same key + same fingerprint:** treated as a replay — return the original row with `200` and `Idempotent-Replay: true`, no new row created.
 - **Same key + different fingerprint:** `409 IDEMPOTENT_MISMATCH` — the client is reusing a key for a different logical request, which is always a client bug.
 - **Duplicate network request (client retried before seeing a response):** the unique constraint on `(tenant_id, idempotency_key)` makes the second insert either fail-and-be-caught-as-a-replay-lookup or naturally collide; the service always does an upsert-shaped "insert, on unique violation re-read and compare fingerprint" flow rather than a separate pre-check-then-insert (which would itself race).
@@ -792,8 +815,10 @@ GATE 14 — Production readiness
 | 6 | Gates 4–5 passed | `orders` module | State machine, line-total trigger, version-conflict tests | Customer-name decision (2A) resolved; full counter order lifecycle works | billing depends on this |
 | 7 | Gate 6 passed | `kitchen` module | Permission matrix for kitchen role | Polling returns only changed rows | — (parallel to billing) |
 | 8 | Gate 6 passed | `billing` module | Finalize lock-ordering + immutability trigger tests, double-finalize concurrency test | Discount cap decision (2A) confirmed; `orders.bill_id`/`bill_order` consistency test passes | payments depends on this |
-| 9 | Gate 8 passed | `payments` module | Payment trigger + overpayment rejection + duplicate-payment concurrency test | UTR default (2B) shipped; `paid=SUM(succeeded)` holds under concurrency | dashboard depends on this |
+| 9 | _(merged into Gate 8)_ | — | Payments are delivered with billing in Gate 8 (ADR-030); Gates 10-14 keep their numbers so existing references stay valid | — | — |
 | 10 | Gates 8–9 passed | `expenses`, `reporting` modules | Metric-correctness API tests against seed fixture | Business-day boundary correctly attributes bills/payments/expenses | — |
+| 8 | Gate 6 passed | `billing` & `payments` modules | Finalize lock-ordering + immutability trigger tests, payment settlement trigger, double-finalize & duplicate-payment concurrency tests | Discount cap confirmed; `round_to_rupee=true`; `orders.bill_id`/`bill_order` consistency test passes; `paid=SUM(succeeded)` holds under concurrency | dashboard depends on this |
+| 10 | Gate 8 passed | `expenses`, `reporting` modules | Metric-correctness API tests against seed fixture | Business-day boundary correctly attributes bills/payments/expenses | — |
 | 11 | Gates 2–10 passed | `public` module | Isolation test (Tenant B token → 404), concurrency (20 simultaneous QR orders) | Retention-window decision (2A) confirmed; `app_public` boundary test passes | printing is finalized against real bill output |
 | 12 | Gate 11 passed | Print CSS/routes | Manual acceptance test on real hardware | Printer decision (2A) resolved; acceptance test passed on real hardware | frontend integration is declared complete |
 | 13 | Gates 3–12 passed | Full `/app/*` wiring, error/empty/loading states | Playwright 13 journeys + isolation script | Every screen meets the frontend Definition-of-Done checklist | staging cutover |
@@ -836,4 +861,4 @@ One implementation-technique detail is worth flagging explicitly so it isn't mis
 
 ## Architecture Change Log
 
-> **No architectural changes made. The existing architecture remains the source of truth.**
+> **Gate 8 reconciliation (billing + payments).** No change of architecture; the following text was corrected to match the locked Gate 8 plan: `bill_order` is retained on void (`orders.bill_id` is the only current link); PAID is set by the settlement trigger, which is `AFTER INSERT` only, locks the bill and then sums in a separate statement; payments are INSERT-only; draft creation locks the session `FOR SHARE`, session close is blocked by open orders and DRAFT/FINALIZED bills; `round_to_rupee` defaults to `true`; `PATCH /orders/:id/lines` returns 422 `ORDER_ALREADY_BILLED`; Gate 8 and Gate 9 are merged (payments ship with billing). Recorded as ADR-028 to ADR-031 in the architecture document.

@@ -26,6 +26,21 @@
 -- Gate 2, anticipating this exact gate. None of the four get app_public
 -- (Public Ordering is Gate 11, not Gate 6).
 
+-- Gate 8 (billing_core, orders_bill_link, payments): bill, bill_order,
+-- bill_line, bill_adjustment and payment pick up the dynamic app_rw grant
+-- below, narrowed by explicit exceptions so financial history cannot be
+-- rewritten or destroyed through application SQL (architecture section 11:
+-- "Financial rows are never deleted"). The mutable-while-DRAFT tables
+-- (bill_line, bill_adjustment) are additionally protected by guard triggers in
+-- R__triggers.sql that require a DRAFT parent bill.
+--
+--   payment          SELECT, INSERT          (insert-only ledger, no UPDATE/DELETE)
+--   bill_order       SELECT, INSERT          (historical association; V1 has no
+--                                             draft-membership editing endpoint)
+--   bill             SELECT, INSERT, UPDATE  (never deleted)
+--   bill_line        SELECT, INSERT, DELETE  (draft re-copy at finalize; no UPDATE)
+--   bill_adjustment  SELECT, INSERT, UPDATE, DELETE (DRAFT discount replace/remove)
+--
 -- app_rw: SELECT/INSERT/UPDATE/DELETE on every tenant table (any table
 -- with a tenant_id column), except the two append-only tables
 -- (order_status_history, audit_event), which get SELECT/INSERT only —
@@ -46,9 +61,15 @@ BEGIN
       AND c.relkind = 'r'
       AND n.nspname = 'public'
   LOOP
-    IF rec.table_name IN ('order_status_history', 'audit_event') THEN
+    IF rec.table_name IN ('order_status_history', 'audit_event', 'payment', 'bill_order') THEN
       EXECUTE format('GRANT SELECT, INSERT ON public.%I TO app_rw', rec.table_name);
       EXECUTE format('REVOKE UPDATE, DELETE ON public.%I FROM app_rw', rec.table_name);
+    ELSIF rec.table_name = 'bill' THEN
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE ON public.%I TO app_rw', rec.table_name);
+      EXECUTE format('REVOKE DELETE ON public.%I FROM app_rw', rec.table_name);
+    ELSIF rec.table_name = 'bill_line' THEN
+      EXECUTE format('GRANT SELECT, INSERT, DELETE ON public.%I TO app_rw', rec.table_name);
+      EXECUTE format('REVOKE UPDATE ON public.%I FROM app_rw', rec.table_name);
     ELSE
       EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO app_rw', rec.table_name);
     END IF;

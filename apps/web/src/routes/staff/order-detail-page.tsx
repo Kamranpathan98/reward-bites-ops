@@ -71,6 +71,9 @@ export function OrderDetailPage(): JSX.Element {
   }
 
   const order = orderQuery.data.data;
+  // Once a bill is FINALIZED the order is frozen (server: ORDER_ALREADY_BILLED);
+  // disable the controls instead of letting staff hit the 422.
+  const isBilled = order.billId !== null;
 
   const handleTransition = (to: OrderTransitionTarget): void => {
     setError(null);
@@ -123,6 +126,15 @@ export function OrderDetailPage(): JSX.Element {
         </div>
       </div>
 
+      {isBilled && (
+        <p className="rounded-md border border-border bg-muted p-3 text-sm">
+          This order is on a bill and can no longer be changed.{' '}
+          <Link to={`/app/bills/${order.billId}`} className="text-primary-strong hover:underline">
+            View bill
+          </Link>
+        </p>
+      )}
+
       {error && (
         <p role="alert" className="text-sm text-red-600">
           {error}
@@ -160,6 +172,7 @@ export function OrderDetailPage(): JSX.Element {
                 <span>{formatPaise(line.lineTotalPaise)}</span>
                 <Can permission="orders.update">
                   {line.status === 'ACTIVE' &&
+                    !isBilled &&
                     (order.status === 'NEW' || order.status === 'ACCEPTED') && (
                       <Button size="sm" variant="outline" onClick={() => handleRemoveLine(line.id)}>
                         Remove
@@ -193,7 +206,7 @@ export function OrderDetailPage(): JSX.Element {
             </Can>
           ))}
 
-          {CANCELLABLE.includes(order.status) && (
+          {CANCELLABLE.includes(order.status) && !isBilled && (
             <Can permission="orders.cancel">
               <Button size="sm" variant="outline" onClick={() => setShowCancelForm((v) => !v)}>
                 Cancel order
@@ -201,7 +214,7 @@ export function OrderDetailPage(): JSX.Element {
             </Can>
           )}
 
-          {order.status === 'COMPLETED' && (
+          {order.status === 'COMPLETED' && !isBilled && (
             <Can permission="orders.reopen">
               <Button
                 size="sm"

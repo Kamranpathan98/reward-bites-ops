@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useFieldArray, useForm } from 'react-hook-form';
 import {
   createOrderRequestSchema,
@@ -15,6 +15,8 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { ApiError } from '@/lib/api-client';
 import { Can } from '@/features/auth/can';
+import { describeBillError } from '@/features/billing/bill-format';
+import { useCreateBill } from '@/features/billing/use-bills';
 import { useMenu } from '@/features/menu/use-menu';
 import { useCreateOrder, useOrders } from '@/features/orders/use-orders';
 import { useTables } from '@/features/tables/use-tables';
@@ -41,6 +43,39 @@ const STATUS_TABS: Array<{ label: string; value: OrderStatus | undefined }> = [
 export function OrdersPage(): JSX.Element {
   const [statusFilter, setStatusFilter] = useState<OrderStatus | undefined>(undefined);
   const ordersQuery = useOrders(statusFilter ? { status: [statusFilter] } : undefined);
+  const navigate = useNavigate();
+  const createBill = useCreateBill();
+  const [selected, setSelected] = useState<string[]>([]);
+  const [billError, setBillError] = useState<string | null>(null);
+
+  const orders = ordersQuery.data?.data ?? [];
+  const isBillable = (o: OrderSummary): boolean => o.status !== 'CANCELLED' && o.billId === null;
+  // A bill covers one table session, so selection is locked to the session of
+  // the first ticked order.
+  const selectedOrders = orders.filter((o) => selected.includes(o.id));
+  const activeSessionId = selectedOrders[0]?.tableSessionId;
+
+  const toggle = (id: string): void =>
+    setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+
+  const handleCreateBill = (): void => {
+    if (!activeSessionId || selectedOrders.length === 0) return;
+    setBillError(null);
+    createBill.mutate(
+      {
+        idempotencyKey: crypto.randomUUID(),
+        sessionId: activeSessionId,
+        orderIds: selectedOrders.map((o) => o.id),
+      },
+      {
+        onSuccess: (res) => {
+          setSelected([]);
+          navigate(`/app/bills/${res.data.id}`);
+        },
+        onError: (err) => setBillError(describeBillError(err)),
+      },
+    );
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -81,40 +116,94 @@ export function OrdersPage(): JSX.Element {
             <p className="text-muted-foreground">No orders yet.</p>
           )}
           {ordersQuery.data && ordersQuery.data.data.length > 0 && (
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-border text-muted-foreground">
-                  <th className="py-2 pr-4 font-medium">Order #</th>
-                  <th className="py-2 pr-4 font-medium">Type</th>
-                  <th className="py-2 pr-4 font-medium">Status</th>
-                  <th className="py-2 pr-4 font-medium">Subtotal</th>
-                  <th className="py-2 pr-4 font-medium">Placed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ordersQuery.data.data.map((order: OrderSummary) => (
-                  <tr key={order.id} className="border-b border-border last:border-0">
-                    <td className="py-2 pr-4">
-                      <Link
-                        to={`/app/orders/${order.id}`}
-                        className="text-primary-strong hover:underline"
-                      >
-                        {order.orderNumber}
-                      </Link>
-                    </td>
-                    <td className="py-2 pr-4">{order.type}</td>
-                    <td className="py-2 pr-4">
-                      <Badge variant={order.status === 'CANCELLED' ? 'secondary' : 'default'}>
-                        {order.status}
-                      </Badge>
-                    </td>
-                    <td className="py-2 pr-4">{formatPaise(order.subtotalPaise)}</td>
-                    <td className="py-2 pr-4">{new Date(order.placedAt).toLocaleString()}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground">
+                    <Can permission="bills.create">
+                      <th className="w-8 py-2 pr-2 font-medium">
+                        <span className="sr-only">Select for bill</span>
+                      </th>
+                    </Can>
+                    <th className="py-2 pr-4 font-medium">Order #</th>
+                    <th className="py-2 pr-4 font-medium">Type</th>
+                    <th className="py-2 pr-4 font-medium">Status</th>
+                    <th className="py-2 pr-4 font-medium">Subtotal</th>
+                    <th className="py-2 pr-4 font-medium">Billing</th>
+                    <th className="py-2 pr-4 font-medium">Placed</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {ordersQuery.data.data.map((order: OrderSummary) => (
+                    <tr key={order.id} className="border-b border-border last:border-0">
+                      <Can permission="bills.create">
+                        <td className="py-2 pr-2">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select order ${order.orderNumber} for billing`}
+                            checked={selected.includes(order.id)}
+                            disabled={
+                              !isBillable(order) ||
+                              (activeSessionId !== undefined &&
+                                order.tableSessionId !== activeSessionId)
+                            }
+                            onChange={() => toggle(order.id)}
+                          />
+                        </td>
+                      </Can>
+                      <td className="py-2 pr-4">
+                        <Link
+                          to={`/app/orders/${order.id}`}
+                          className="text-primary-strong hover:underline"
+                        >
+                          {order.orderNumber}
+                        </Link>
+                      </td>
+                      <td className="py-2 pr-4">{order.type}</td>
+                      <td className="py-2 pr-4">
+                        <Badge variant={order.status === 'CANCELLED' ? 'secondary' : 'default'}>
+                          {order.status}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-4">{formatPaise(order.subtotalPaise)}</td>
+                      <td className="py-2 pr-4">
+                        {order.billId ? (
+                          <Link
+                            to={`/app/bills/${order.billId}`}
+                            className="text-primary-strong hover:underline"
+                          >
+                            Billed
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-4">{new Date(order.placedAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
+          <Can permission="bills.create">
+            {selected.length > 0 && (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button onClick={handleCreateBill} disabled={createBill.isPending}>
+                  {createBill.isPending
+                    ? 'Creating…'
+                    : `Create bill from ${selected.length} order${selected.length === 1 ? '' : 's'}`}
+                </Button>
+                <Button variant="outline" onClick={() => setSelected([])}>
+                  Clear selection
+                </Button>
+                {billError && (
+                  <p role="alert" className="text-sm text-red-600">
+                    {billError}
+                  </p>
+                )}
+              </div>
+            )}
+          </Can>
         </CardContent>
       </Card>
     </div>

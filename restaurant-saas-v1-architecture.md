@@ -279,7 +279,7 @@ The machine is **fixed in code**; the tenant setting `orders.workflow` (`SIMPLE`
 | `NEW → ACCEPTED` | `orders.transition.front` (cashier, manager, owner); auto if `orders.auto_accept = true` | `accepted_at` |
 | `ACCEPTED → PREPARING`, `PREPARING → READY` | `orders.transition.kitchen` (kitchen, manager, owner) | timestamps |
 | `→ COMPLETED` | `orders.transition.front` | `completed_at`; session may auto-close |
-| `→ CANCELLED` | `orders.cancel`; requires `cancel_reason`; blocked if `billing_status = BILLED` unless the bill is first voided | `cancelled_at`, audit event |
+| `→ CANCELLED` | `orders.cancel`; requires `cancel_reason`; blocked if `orders.bill_id IS NOT NULL` unless the bill is first voided | `cancelled_at`, audit event |
 
 Implementation: `UPDATE orders SET status = $new, version = version + 1, ... WHERE id = $id AND tenant_id = ctx AND status = $expectedFrom AND version = $expectedVersion RETURNING *`. Zero rows updated → the service re-reads the order and returns `409 CONFLICT` with the current status and version, so the client can show "Order already marked READY by Priya". Every successful transition inserts into `order_status_history(order_id, from_status, to_status, actor_kind, actor_id, at, reason)`. This is the audit trail for orders and it is append-only (no `UPDATE`/`DELETE` grant for `app_rw` on that table).
 
@@ -287,7 +287,7 @@ Implementation: `UPDATE orders SET status = $new, version = version + 1, ... WHE
 
 Edits are gated by the order's status, because the kitchen has already acted on some of them. `NEW` and `ACCEPTED`: free edit with `orders.update`. `PREPARING` and `READY`: edit requires `orders.update.in_progress` (manager and owner by default; a tenant may grant it to cashiers) and a mandatory `reason`; the KDS shows a "changed" badge with the reason so the cook knows what to stop or start. `COMPLETED` and `CANCELLED`: no edit; a completed-but-unbilled order can be reopened with `orders.reopen` (audited) which returns it to `ACCEPTED`. Any order with `bill_id` set cannot be edited at all. Each edit is a `PATCH /orders/:id/lines` carrying `expectedVersion`; the transaction locks the order row (`SELECT ... FOR UPDATE`), applies line changes, recomputes `subtotal_paise`, bumps `version`, and writes one `audit_event` with the before/after line diff and the reason. Removing a line sets `status = REMOVED` rather than deleting, so the kitchen can see "Rahul cancelled the Manchurian".
 
-A billed order cannot be edited; the cashier must void the bill (audited, reason required) which flips the orders back to `UNBILLED`, then edit, then re-finalize. This is deliberately clunky: it keeps the financially finalized bill immutable and makes the correction visible.
+A billed order cannot be edited; the cashier must void the bill (audited, reason required) which clears `orders.bill_id` to `NULL`, then edit, then re-finalize. Historical `bill_order` rows are retained forever. This is deliberately clunky: it keeps the financially finalized bill immutable and makes the correction visible.
 
 ### Order sources and future channels
 
@@ -299,7 +299,7 @@ A Bill is a frozen financial document over a set of orders; it is created as a `
 
 ### Money representation
 
-All amounts are `BIGINT NOT NULL CHECK (x >= 0)` in paise (`₹180.50 = 18050`). TypeScript uses a branded `Paise` type (`number` is safe up to 2^53 paise ≈ ₹90 trillion). Percent discounts are stored as basis points (`INT`, `1050 = 10.50%`). Every derived total is computed once in SQL or in one pure function `computeBillTotals(lines, adjustments)` and **stored**; a bill is never re-summed from lines at read time. Rounding: line totals are exact integers; a percentage discount rounds half-up to the paise; a tenant setting `billing.round_to_rupee` (default true) adds a `rounding_paise` adjustment so the grand total is a whole rupee, which is how Indian counters actually work.
+All amounts are `BIGINT NOT NULL CHECK (x >= 0)` in paise (`₹180.50 = 18050`). TypeScript uses a branded `Paise` type (`number` is safe up to 2^53 paise ≈ ₹90 trillion). Percent discounts are stored as basis points (`INT`, `1050 = 10.50%`). Every derived total is computed once in SQL or in one pure function `computeBillTotals(lines, adjustments)` and **stored**; a bill is never re-summed from lines at read time. Rounding: line totals are exact integers; a percentage discount rounds half-up to the paise; a tenant setting `billing.round_to_rupee` (default true) sets the signed `rounding_paise` so the grand total is a whole rupee (half-up: with `P = subtotal - discount` and `r = P mod 100`, rounding is `-r` if `r < 50` else `100 - r`, range −49..+50; stored on the bill, not as an adjustment row: V1 `bill_adjustment` holds discounts only), which is how Indian counters actually work.
 
 ### Bill
 
@@ -311,13 +311,13 @@ All amounts are `BIGINT NOT NULL CHECK (x >= 0)` in paise (`₹180.50 = 18050`).
 | `paid_paise`, `outstanding_paise` | `paid_paise` is written only by a database trigger on `payment` (sum of `SUCCEEDED` amounts for the bill); CHECK `outstanding_paise = grand_total_paise - paid_paise` and CHECK `paid_paise <= grand_total_paise`. Service code never assigns these columns. |
 | `version`, `finalized_at`, `finalized_by`, `voided_at`, `voided_by`, `void_reason`, `customer_name`, `notes` | |
 
-`bill_order(bill_id, order_id)` records which orders a bill covers, for drafts and finalized bills alike; it carries no status. The one-live-bill-per-order invariant is owned by `orders.bill_id` (section 8): finalize locks each order `FOR UPDATE`, asserts `bill_id IS NULL`, and sets it; void clears it. A second concurrent finalize over the same order blocks on the lock, re-reads, and fails with 422 `ORDER_ALREADY_BILLED`. `bill_line` is a copy of each active `order_line` and its add-ons at finalization: `bill_id, order_id, order_line_id, description, qty, unit_price_paise, line_total_paise, sort_order`. `bill_adjustment(bill_id, kind, label, basis_bp, amount_paise, applied_by, reason)` holds discounts in V1 and tax/service/delivery lines later; `kind` is a CHECK enum (`DISCOUNT_PERCENT`, `DISCOUNT_FIXED`, `TAX`, `SERVICE_CHARGE`, `DELIVERY_CHARGE`, `ROUNDING`).
+`bill_order(bill_id, order_id)` records which orders a bill covers, for drafts and finalized bills alike; it carries no status. Rows are retained forever as an immutable audit trace even if the bill is voided. The one-live-bill-per-order invariant is owned by `orders.bill_id` (section 8): finalize locks each order `FOR UPDATE`, asserts `bill_id IS NULL`, and sets it; void clears it back to `NULL`. A second concurrent finalize over the same order blocks on the lock, re-reads, and fails with 422 `ORDER_ALREADY_BILLED`. `bill_line` is a copy of each active `order_line` and its add-ons, re-copied at finalization: `bill_id, order_id, order_line_id, line_kind (ITEM | ADDON), addon_id, description, qty, unit_price_paise, line_total_paise, sort_order`. Each order line becomes one ITEM row and each add-on its own ADDON row, so every row satisfies `line_total = qty × unit_price` (an add-on's qty is NOT multiplied by the line qty, exactly as in `order_line.line_total_paise`); composite FKs prove the order is a member of the bill (`bill_order`) and the line belongs to that order. `bill_adjustment(bill_id, kind, label, basis_bp, amount_paise, applied_by, reason)` holds discounts in V1 and tax/service/delivery lines later; `kind` is a CHECK enum (`DISCOUNT_PERCENT`, `DISCOUNT_FIXED`, `TAX`, `SERVICE_CHARGE`, `DELIVERY_CHARGE`, `ROUNDING`) of which only the two discount kinds are accepted in V1, and a partial unique index allows at most one discount per bill (other kinds may coexist later). Removing a DRAFT discount deletes its row; the history lives in `audit_event` (`discount_applied` with `before`, `discount_removed`).
 
 ### Bill lifecycle
 
 ```mermaid
 flowchart LR
-  A[Cashier picks orders<br/>of a session] --> B[Create DRAFT<br/>lines copied]
+  A[Cashier picks orders<br/>of a session] --> B[Create DRAFT<br/>lines derived]
   B --> C{Discount?}
   C -->|yes| D[Add adjustment<br/>totals recomputed]
   C -->|no| E[Finalize]
@@ -329,7 +329,7 @@ flowchart LR
   H -->|no| G
 ```
 
-Finalization is one transaction: `SELECT ... FOR UPDATE` on the bill and on every covered order (bill first, then orders by id ascending); assert each order has `bill_id IS NULL` and is not `CANCELLED`; re-copy lines from current order lines (the draft may be stale) and fail with `409` if the resulting grand total differs from `expectedGrandTotalPaise` so nobody finalizes a bill that changed under them; assign `bill_number`; set `orders.bill_id`; write `audit_event`. After finalization, `app_rw` may only `UPDATE` bill rows through a trigger-guarded path: a `BEFORE UPDATE` trigger raises unless the change is limited to `status`, `version`, `voided_*`, `updated_at` (and `paid_paise`/`outstanding_paise` when the caller is the payment trigger). Financial invariants are database-owned: the two CHECKs on the bill table, and an `AFTER INSERT OR UPDATE ON payment` trigger that recomputes `paid_paise` and `outstanding_paise` for the affected bill from `SUM(amount_paise) WHERE status = 'SUCCEEDED'`. Service code never writes those two columns; a nightly job re-asserts the equality across all bills and alerts on drift. That trigger set is the immutability and consistency rule, and it lives in the database so no service bug can break it.
+Finalization is one transaction: `SELECT ... FOR UPDATE` on the bill and on every covered order (bill first, then orders by id ascending); assert each order has `bill_id IS NULL` and is not `CANCELLED`; re-copy lines from current order lines (the draft may be stale) and fail with `409` if the resulting grand total differs from `expectedGrandTotalPaise` so nobody finalizes a bill that changed under them; assign `bill_number`; set `orders.bill_id`; write `audit_event`. After finalization, `app_rw` may only `UPDATE` bill rows through a trigger-guarded path: a `BEFORE UPDATE` trigger raises unless the change is limited to `status`, `version`, `voided_*`, `updated_at` (and `paid_paise`/`outstanding_paise`/`PAID` status when called via the payment settlement trigger at `pg_trigger_depth() > 1`). Financial snapshot fields remain strictly immutable once `FINALIZED`. Financial invariants are database-owned: the two CHECKs on the bill table, and an `AFTER INSERT ON payment` trigger (it locks the bill row `FOR NO KEY UPDATE` first, then sums in a separate statement, so a payment committed by another transaction while it waited is always counted) that recomputes `paid_paise` and `outstanding_paise` for the affected bill from `SUM(amount_paise) WHERE status = 'SUCCEEDED'` and transitions `status = 'PAID'` when outstanding is 0. Service code never writes those two columns; a nightly job re-asserts the equality across all bills and alerts on drift. That trigger set is the immutability and consistency rule, and it lives in the database so no service bug can break it.
 
 Split bills fall out naturally: create two drafts over disjoint order subsets of the same session. Per-customer bills at one table are just "one draft per order". Merged bills are one draft over all orders. V1 UI exposes "bill this order" and "bill whole table"; per-line splitting is future.
 
@@ -343,12 +343,12 @@ V1 supports one discount per bill (percent or fixed), applied by `bills.discount
 | --- | --- |
 | `id`, `tenant_id`, `bill_id`, `amount_paise` | Positive; `REFUND` kind (future) uses a separate signed `direction` column, not negative amounts |
 | `method` | `CASH`, `UPI_STATIC`; future `UPI_GATEWAY`, `CARD`, `WALLET` |
-| `status` | `PENDING` → `SUCCEEDED`; `PENDING` → `FAILED`; `SUCCEEDED` → `REVERSED` (future refund) |
+| `status` | `SUCCEEDED` in V1; `PENDING`/`FAILED` reserved for future gateways |
 | `provider`, `provider_reference`, `provider_status`, `provider_payload` (JSONB) | `provider = 'manual'` in V1; `provider_reference` holds the UPI transaction/UTR number the cashier types |
 | `reference_note`, `received_by`, `received_at`, `verified_by`, `verified_at` | For static UPI the cashier is both |
 | `idempotency_key` | `UNIQUE (tenant_id, idempotency_key)` |
 
-V1 flow: cashier posts `{billId, method, amountPaise, providerReference?, idempotencyKey, expectedBillVersion}`. In one transaction: lock the bill; assert `status = FINALIZED`; assert `amountPaise = outstanding_paise` — V1 is full settlement only, and anything else is 422 `PARTIAL_PAYMENT_NOT_ENABLED` unless the tenant setting `payments.allow_partial` (default false, not exposed in the V1 UI) is on, in which case `paid + amount <= grand_total` applies and overpayment is 422 `OVERPAYMENT`; change-giving is a UI calculation, not a payment. Insert the payment with `status = SUCCEEDED` (the human verification *is* the confirmation); the payment trigger updates `paid_paise`/`outstanding_paise`; if outstanding is 0 the service sets the bill `PAID`. Payment never changes an order's `status`: operational completion and financial settlement are separate lifecycles, and the session auto-closes only when every order is `COMPLETED`/`CANCELLED` **and** every bill is `PAID`/`VOID`/`DISCARDED`. V1 implements payment states `PENDING`, `SUCCEEDED`, `FAILED`; `REVERSED` is present in the CHECK constraint but no code path produces it. Cash and UPI are recorded the same way; the dashboard splits by `method`.
+V1 flow: cashier posts `{billId, method, amountPaise, providerReference?, idempotencyKey, expectedBillVersion}`. In one transaction: lock the bill; assert `status = FINALIZED`; assert `amountPaise = outstanding_paise` — V1 is full settlement only, and anything else is 422 `PARTIAL_PAYMENT_NOT_ENABLED` unless the tenant setting `payments.allow_partial` (default false, not exposed in the V1 UI) is on, in which case `paid + amount <= grand_total` applies and overpayment is 422 `OVERPAYMENT`; change-giving is a UI calculation, not a payment. Insert the payment with `status = SUCCEEDED` (the human verification *is* the confirmation); the payment table is INSERT-only (no `updated_at`, UPDATE/DELETE revoked from `app_rw`); the payment trigger updates `paid_paise`/`outstanding_paise` and sets the bill `PAID`. Payment never changes an order's `status`: operational completion and financial settlement are separate lifecycles, and the session auto-closes only when every order is `COMPLETED`/`CANCELLED` **and** every bill is `PAID`/`VOID`/`DISCARDED`. V1 records only `SUCCEEDED` payments; `PENDING`, `FAILED` and `REVERSED` are reserved in the CHECK constraint for the future gateway/refund flow and no code path produces them. Cash and UPI are recorded the same way; the dashboard splits by `method`.
 
 For static UPI, `provider_reference` (UTR, 12 digits) is **required** by default (`payments.upi_reference_required`, overridable per tenant). This is the anti-fraud control the brief lacks: a screenshot can be faked, a UTR can be reconciled against the owner's bank statement later.
 
@@ -527,14 +527,14 @@ Auth column: **P** = public token, **T** = tenant JWT (+ permission in brackets)
 | orders | `GET /orders` | T [orders.read] | filters `status[]`, `type`, `source`, `sessionId`, `from`, `to`, `q` (customer name / order number); cursor |
 | orders | `GET /orders/:id` | T [orders.read] | with lines, history, bill link |
 | orders | `POST /orders` | T [orders.create] | `{idempotencyKey, type, tableId?, customerName?, lines[{itemId, variantId?, qty, addons[{addonId, qty}], notes}], notes}` → order; 422 on unavailable item |
-| orders | `PATCH /orders/:id/lines` | T [orders.update] | `{expectedVersion, add[], update[{lineId, qty, variantId}], remove[lineId]}`; 409 on version or billed |
+| orders | `PATCH /orders/:id/lines` | T [orders.update] | `{expectedVersion, add[], update[{lineId, qty, variantId}], remove[lineId]}`; 409 on version, 422 `ORDER_ALREADY_BILLED` if billed (checked before the version) |
 | orders | `POST /orders/:id/transition` | T [orders.transition.front or .kitchen] | `{to, expectedVersion, reason?}`; 409 on invalid or stale |
 | orders | `POST /orders/:id/cancel` | T [orders.cancel] | `{expectedVersion, reason}` |
 | orders | `POST /orders/:id/reopen` | T [orders.reopen] | COMPLETED & UNBILLED → ACCEPTED |
 | kitchen | `GET /kitchen/orders?since=` | T [kitchen.read] | active kitchen orders, cursor by `updated_at` |
 | bills | `GET /bills`, `GET /bills/:id` | T [bills.read] | filters `status`, `from`, `to`, `sessionId` |
 | bills | `POST /bills` | T [bills.create] | `{idempotencyKey, sessionId, orderIds[], customerName?}` → DRAFT with lines and totals |
-| bills | `PATCH /bills/:id/adjustments` | T [bills.discount] | `{expectedVersion, discount: {kind, value, reason}}` on DRAFT only |
+| bills | `PATCH /bills/:id/adjustments` | T [bills.discount] | `{expectedVersion, discount: {kind: PERCENT | FIXED, value, reason?} | null}` on DRAFT only; `null` removes the discount |
 | bills | `POST /bills/:id/finalize` | T [bills.finalize] | `{expectedVersion, expectedGrandTotalPaise}` → FINALIZED with `billNumber`; 409 if totals moved |
 | bills | `POST /bills/:id/discard` | T [bills.create] | DRAFT → DISCARDED |
 | bills | `POST /bills/:id/void` | T [bills.void] | `{expectedVersion, reason}`; 409 if PAID (V1) |
@@ -711,8 +711,8 @@ Every error is `{ error: { code, message, details?, requestId, retryable } }` wi
 | Authentication | 401 | `TOKEN_EXPIRED`, `TOKEN_INVALID`, `CREDENTIALS_INVALID` | refresh once; else go to login |
 | Authorization | 403 | `PERMISSION_DENIED`, `TENANT_SUSPENDED` | toast; hide action |
 | Not found (incl. other-tenant ids, closed-session tokens) | 404 | `NOT_FOUND` | "This order no longer exists" |
-| Business rule | 422 | `ITEM_UNAVAILABLE`, `ORDER_ALREADY_BILLED`, `INVALID_TRANSITION`, `OVERPAYMENT`, `PARTIAL_PAYMENT_NOT_ENABLED`, `DISCOUNT_EXCEEDS_CAP`, `SESSION_HAS_UNPAID_BILLS`, `EDIT_REQUIRES_REASON` | specific inline message with `details` (e.g. item name) |
-| Conflict | 409 | `VERSION_CONFLICT`, `IDEMPOTENT_MISMATCH`, `SESSION_ALREADY_OPEN` | refetch entity, show "changed by X", let user retry |
+| Business rule | 422 | `ITEM_UNAVAILABLE`, `ORDER_ALREADY_BILLED`, `INVALID_TRANSITION`, `OVERPAYMENT`, `PARTIAL_PAYMENT_NOT_ENABLED`, `DISCOUNT_EXCEEDS_CAP`, `ORDER_NOT_BILLABLE`, `BILL_TOTAL_NOT_POSITIVE`, `PAYMENT_METHOD_DISABLED`, `PAYMENT_REFERENCE_REQUIRED`, `EDIT_REQUIRES_REASON` | specific inline message with `details` (e.g. item name) |
+| Conflict | 409 | `VERSION_CONFLICT`, `IDEMPOTENT_MISMATCH`, `SESSION_ALREADY_OPEN`, `SESSION_CLOSED`, `SESSION_HAS_OPEN_ORDERS`, `SESSION_HAS_DRAFT_BILLS`, `SESSION_HAS_UNPAID_BILLS`, `BILL_NOT_DRAFT`, `BILL_NOT_PAYABLE`, `BILL_NOT_VOIDABLE`, `BILL_HAS_PAYMENTS`, `BILL_TOTALS_CHANGED` | refetch entity, show "changed by X", let user retry |
 | Rate limit | 429 | `RATE_LIMITED` (+ `Retry-After`) | customer: "please wait"; staff: silent backoff |
 | Database | 500 | `INTERNAL` (details never exposed) | generic error, `requestId` shown for support |
 | Unavailable | 503 | `DB_UNAVAILABLE`, `STORAGE_UNAVAILABLE` (`retryable: true`) | auto-retry with backoff up to 3× for GETs; never auto-retry POSTs without an idempotency key |
@@ -862,7 +862,7 @@ WhatsApp is an inbound channel adapter and an outbound notifier, not a new order
 
 ## 17. Architecture Decision Records
 
-Each ADR: context → decision → consequences. Status is *Proposed* until the approval list in section 19 is signed off; ADRs 023–027 were added by the correction pass in section 20.
+Each ADR: context → decision → consequences. Status is *Proposed* until the approval list in section 19 is signed off; ADRs 023–027 were added by the correction pass in section 20; ADRs 028–031 by the Gate 8 reconciliation.
 
 | ADR | Decision | Context and rationale | Consequences / trade-offs |
 | --- | --- | --- | --- |
@@ -893,6 +893,10 @@ Each ADR: context → decision → consequences. Status is *Proposed* until the 
 | 025 | Order lifecycle and bill/payment lifecycle never write to each other | Operational completion ≠ financial settlement | Payment does not complete orders; only session closure reads both |
 | 026 | Idempotency = key + request fingerprint | Key reuse with a different body must not be silently replayed | `IDEMPOTENT_MISMATCH` 409; fingerprint stored beside the key |
 | 027 | V1 payments are full-settlement only, schema is multi-payment | Scope says no partial payments; schema cost of supporting them later is zero | `payments.allow_partial` setting, default false, hidden in V1 |
+| 028 | `bill_order` is a retained historical association; `orders.bill_id` is the only current link | An order can appear under several bills over its lifetime (bill 101 voided, then bill 102); deleting history would contradict "financial rows are never deleted" | Never derive the current bill from `bill_order.order_id` alone; the reverse composite FK ties `orders.bill_id` to membership |
+| 029 | Payments are insert-only; the settlement trigger is `AFTER INSERT`, locks the bill, then sums in a separate statement | A single `UPDATE bill SET paid = (SELECT SUM ...)` sums under a snapshot taken before waiting for the lock, so concurrent payments can commit with `paid_paise` lagging the ledger; the lock is `FOR NO KEY UPDATE` because the insert's FK check already holds `KEY SHARE` and `FOR UPDATE` deadlocks concurrent inserters | `UPDATE`/`DELETE` revoked from `app_rw`; a future gateway adds a narrow UPDATE path in its own migration |
+| 030 | Billing and payment recording ship together as Gate 8 | Payments cannot be verified without bills, and the bill money CHECKs and the settlement trigger are one unit | Gate 9 is retired (numbers 10-14 unchanged); partial payments, refunds and gateways remain out of scope |
+| 031 | `round_to_rupee` defaults to `true`; rounding lives on the bill only | Architecture section 9 states the default; there is no settings API, so the column default is the effective V1 value | Forward migration sets the default and backfills; `bill_adjustment` holds discounts only in V1 |
 
 ## 18. Threat Model, Self-Critique, Risks and Mitigations
 

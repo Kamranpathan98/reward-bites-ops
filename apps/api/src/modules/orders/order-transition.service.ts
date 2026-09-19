@@ -151,6 +151,15 @@ export class OrderTransitionService {
         const order = await this.orderRepository.lockById(tx, actor.tenantId, orderId);
         if (!order) throw new NotFoundException('Order not found.');
 
+        if (order.billId) {
+          throw new DomainError(
+            422,
+            'ORDER_ALREADY_BILLED',
+            'This order is already billed. Void its bill before cancelling it.',
+            { currentStatus: order.status, currentVersion: order.version, billId: order.billId },
+          );
+        }
+
         const updated = await this.orderRepository.conditionalCancel(tx, actor.tenantId, orderId, {
           allowedFromStatuses: CANCELLABLE_FROM,
           expectedVersion: input.expectedVersion,
@@ -194,11 +203,10 @@ export class OrderTransitionService {
 
   /**
    * `orders.reopen`: COMPLETED & unbilled -> ACCEPTED, audited (architecture
-   * section 8). "Unbilled" has no explicit check here — `orders.bill_id`
-   * does not exist as a column until Gate 8's `orders_bill_link` migration
-   * (see docs/IMPLEMENTATION_STATUS.md), so every order is vacuously
-   * unbilled today. Gate 8 adds `AND bill_id IS NULL` to the conditional
-   * UPDATE below once the column exists.
+   * section 8). "Unbilled" means `orders.bill_id IS NULL`: a billed order is
+   * rejected here with 422 ORDER_ALREADY_BILLED (read under the row lock), the
+   * conditional UPDATE repeats `bill_id IS NULL`, and orders_billed_guard is the
+   * database backstop.
    */
   async reopen(
     actor: ActingUser,
@@ -211,6 +219,15 @@ export class OrderTransitionService {
       async (tx) => {
         const order = await this.orderRepository.lockById(tx, actor.tenantId, orderId);
         if (!order) throw new NotFoundException('Order not found.');
+
+        if (order.billId) {
+          throw new DomainError(
+            422,
+            'ORDER_ALREADY_BILLED',
+            'This order is already billed. Void its bill before reopening it.',
+            { currentStatus: order.status, currentVersion: order.version, billId: order.billId },
+          );
+        }
 
         const updated = await this.orderRepository.conditionalReopen(
           tx,

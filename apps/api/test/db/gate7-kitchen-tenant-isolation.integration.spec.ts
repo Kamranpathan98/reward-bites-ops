@@ -155,7 +155,7 @@ describeIfDb('Gate 7 Kitchen — tenant isolation + RBAC (real API + real Postgr
       .send({
         type: 'TAKEAWAY',
         idempotencyKey: randomUUID(),
-        lines: [{ menuItemId: itemAId, qty: 1 }],
+        lines: [{ itemId: itemAId, qty: 1 }],
       });
     expect(orderARes.status).toBe(201);
     const orderAId = orderARes.body.data.id;
@@ -167,7 +167,7 @@ describeIfDb('Gate 7 Kitchen — tenant isolation + RBAC (real API + real Postgr
       .send({
         type: 'TAKEAWAY',
         idempotencyKey: randomUUID(),
-        lines: [{ menuItemId: itemBId, qty: 1 }],
+        lines: [{ itemId: itemBId, qty: 1 }],
       });
     expect(orderBRes.status).toBe(201);
     const orderBId = orderBRes.body.data.id;
