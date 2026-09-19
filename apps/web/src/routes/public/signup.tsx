@@ -27,7 +27,7 @@ export function SignupPage(): JSX.Element {
   const errorMessage = describeSignupError(signup.error);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-secondary p-4">
+    <main className="flex min-h-screen items-center justify-center bg-surface-muted p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Create your RewardBite account</CardTitle>
@@ -134,7 +134,7 @@ export function SignupPage(): JSX.Element {
 
             <p className="text-center text-sm text-muted-foreground">
               Already have a RewardBite account?{' '}
-              <Link to="/app/login" className="font-medium text-primary underline">
+              <Link to="/app/login" className="font-medium text-primary-strong underline">
                 Sign in
               </Link>
             </p>

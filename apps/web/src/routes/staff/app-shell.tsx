@@ -75,8 +75,8 @@ function NavItem({ to, label }: { to: string; label: string }): JSX.Element {
       end
       className={({ isActive }) =>
         cn(
-          'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-secondary',
-          isActive && 'bg-secondary font-medium',
+          'rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-surface-muted',
+          isActive && 'bg-surface-muted font-medium',
         )
       }
     >

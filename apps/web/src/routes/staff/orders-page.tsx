@@ -95,7 +95,10 @@ export function OrdersPage(): JSX.Element {
                 {ordersQuery.data.data.map((order: OrderSummary) => (
                   <tr key={order.id} className="border-b border-border last:border-0">
                     <td className="py-2 pr-4">
-                      <Link to={`/app/orders/${order.id}`} className="text-primary hover:underline">
+                      <Link
+                        to={`/app/orders/${order.id}`}
+                        className="text-primary-strong hover:underline"
+                      >
                         {order.orderNumber}
                       </Link>
                     </td>

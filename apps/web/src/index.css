@@ -4,16 +4,90 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 224 71% 4%;
-    --primary: 224 71% 4%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 224 71% 4%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
-    --border: 220 13% 91%;
-    --radius: 0.5rem;
+    /* Canvas & Surfaces */
+    --background: 210 40% 98%; /* Slate 50 #F8FAFC */
+    --foreground: 222 47% 11%; /* Slate 900 #0F172A */
+    --surface: 0 0% 100%; /* White #FFFFFF */
+    --surface-muted: 210 40% 96%; /* Slate 100 #F1F5F9 */
+    --surface-subtle: 210 40% 98%; /* Slate 50 #F8FAFC */
+    --surface-elevated: 0 0% 100%; /* White #FFFFFF */
+
+    /* Primary Accent (Terracotta / Burnt Orange) */
+    --primary: 21 90% 48%; /* #EA580C */
+    --primary-hover: 17.5 88% 40.4%; /* #C2410C */
+    --primary-active: 15 79% 34%; /* #9A3412 */
+    /* Accessible primary usage. --primary (#EA580C) is 3.56:1 on white: fine
+       for brand surfaces, dots, borders, focus rings and large graphics, but
+       it FAILS WCAG AA for normal-size text and for white text on top of it.
+       --primary-strong (#C2410C, 5.18:1 on white, 4.7:1 on surface-muted) is the AA-safe orange for
+       normal-size text and for button fills carrying white text. */
+    --primary-strong: 17.5 88% 40.4%; /* #C2410C */
+    --primary-pressed: 15 75% 28%; /* #7C2D12 */
+    --primary-foreground: 0 0% 100%; /* #FFFFFF */
+
+    /* Secondary (Deep Slate) */
+    --secondary: 222 47% 11%; /* Slate 900 #0F172A */
+    --secondary-hover: 217 33% 17%; /* Slate 800 #1E293B */
+    --secondary-foreground: 210 40% 98%; /* Slate 50 #F8FAFC */
+
+    /* Neutrals & Borders */
+    --muted: 210 40% 96%; /* Slate 100 #F1F5F9 */
+    --muted-foreground: 215 17% 43%; /* #5B6B80 — AA (4.97:1) on surface-muted, 5.44:1 on white */
+    --border: 214 32% 91%; /* Slate 200 #E2E8F0 */
+    --border-subtle: 210 40% 96%; /* Slate 100 #F1F5F9 */
+    --border-strong: 213 27% 84%; /* Slate 300 #CBD5E1 */
+
+    /* Interactive Focus */
+    --focus-ring: 21 90% 48%; /* #EA580C */
+
+    /* Base Geometry */
+    --radius: 0.5rem; /* 8px */
+
+    /* Operational Status System (All 9 Canonical States) */
+    --status-new: 199 89% 48%;
+    --status-new-surface: 204 100% 97%;
+    --status-new-border: 200 94% 86%;
+    --status-new-text: 201 96% 32%; /* #0369A1, AA on status-new-surface */
+
+    --status-accepted: 243 75% 59%;
+    --status-accepted-surface: 226 100% 97%;
+    --status-accepted-border: 228 96% 89%;
+    --status-accepted-text: 244 58% 39%;
+
+    --status-preparing: 38 92% 50%;
+    --status-preparing-surface: 48 100% 96%;
+    --status-preparing-border: 48 96% 77%;
+    --status-preparing-text: 28 73% 26%;
+
+    --status-ready: 160 84% 39%;
+    --status-ready-surface: 152 81% 96%;
+    --status-ready-border: 149 80% 74%;
+    --status-ready-text: 163 94% 24%;
+
+    --status-completed: 215 19% 35%;
+    --status-completed-surface: 210 40% 96%;
+    --status-completed-border: 214 32% 91%;
+    --status-completed-text: 215 25% 27%;
+
+    --status-paid: 166 72% 28%;
+    --status-paid-surface: 149 80% 90%;
+    --status-paid-border: 152 76% 67%;
+    --status-paid-text: 164 86% 16%;
+
+    --status-pending: 21 90% 48%;
+    --status-pending-surface: 33 100% 96%;
+    --status-pending-border: 27 96% 83%;
+    --status-pending-text: 18 84% 39%;
+
+    --status-cancelled: 347 77% 50%;
+    --status-cancelled-surface: 355 100% 97%;
+    --status-cancelled-border: 351 95% 88%;
+    --status-cancelled-text: 349 77% 40%;
+
+    --status-void: 345 83% 41%;
+    --status-void-surface: 351 100% 96%;
+    --status-void-border: 349 97% 81%;
+    --status-void-text: 343 80% 28%;
   }
 }
 
@@ -22,6 +96,34 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      'cv02' 1,
+      'cv03' 1,
+      'cv04' 1,
+      'cv11' 1;
+  }
+}
+
+/* Reduced motion (docs/design/MOTION-GUIDELINES.md section 5): slide/scale and
+   looping animation are disabled; state changes become instantaneous. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer utilities {
+  /* Tabular numeric typography: enforces tabular figure alignment while maintaining proportional Inter letter glyphs */
+  .font-tabular {
+    font-feature-settings:
+      'tnum' 1,
+      'cv02' 1;
+    font-variant-numeric: tabular-nums;
   }
 }

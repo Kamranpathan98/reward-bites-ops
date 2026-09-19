@@ -36,7 +36,7 @@ export function LoginPage(): JSX.Element {
   const errorMessage = describeLoginError(loginMutation.error);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-secondary p-4">
+    <main className="flex min-h-screen items-center justify-center bg-surface-muted p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Sign in to RewardBite</CardTitle>
@@ -90,7 +90,7 @@ export function LoginPage(): JSX.Element {
 
             <p className="text-center text-sm text-muted-foreground">
               New to RewardBite?{' '}
-              <Link to="/signup" className="font-medium text-primary underline">
+              <Link to="/signup" className="font-medium text-primary-strong underline">
                 Create a restaurant account
               </Link>
             </p>

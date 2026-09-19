@@ -26,7 +26,7 @@ export function SelectTenantPage(): JSX.Element {
 
   if (memberships.length === 0) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-secondary p-4">
+      <main className="flex min-h-screen items-center justify-center bg-surface-muted p-4">
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>No tenant access</CardTitle>
@@ -46,7 +46,7 @@ export function SelectTenantPage(): JSX.Element {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-secondary p-4">
+    <main className="flex min-h-screen items-center justify-center bg-surface-muted p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Choose a restaurant</CardTitle>

@@ -32,10 +32,18 @@ describe('App routing shell', () => {
     renderApp('/');
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'RewardBite' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { level: 1, name: /Run your restaurant/ }),
+      ).toBeInTheDocument();
     });
-    expect(screen.getByRole('link', { name: 'Get Started' })).toHaveAttribute('href', '/signup');
-    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/app/login');
+    expect(screen.getAllByRole('link', { name: 'Get started' })[0]).toHaveAttribute(
+      'href',
+      '/signup',
+    );
+    expect(screen.getAllByRole('link', { name: 'Sign in' })[0]).toHaveAttribute(
+      'href',
+      '/app/login',
+    );
   });
 
   it('redirects an unknown path to login too', async () => {

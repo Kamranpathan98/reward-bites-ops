@@ -10,6 +10,7 @@ import { SetupPage } from '@/routes/staff/setup';
 import { TablesPage } from '@/routes/staff/tables-page';
 import { TablesQrPage } from '@/routes/staff/tables-qr-page';
 import { UsersPage } from '@/routes/staff/users-page';
+import { DesignSystemShowcase } from '@/routes/staff/design-system-showcase';
 import { LandingPage } from '@/routes/public/landing';
 import { SignupPage } from '@/routes/public/signup';
 import { ProtectedRoute } from '@/features/auth/protected-route';
@@ -24,6 +25,11 @@ import { ProtectedRoute } from '@/features/auth/protected-route';
  * `/app/orders` covers list/create/detail/transition/cancel/reopen, which
  * is everything that gate's task brief asked for. Kitchen/Billing/
  * Payments/Public Ordering remain unbuilt (blocked pending Gate 7).
+ *
+ * Design System Showcase is an internal visual reference. Signed-in staff can
+ * always open it at `/app/design-system`; the unauthenticated `/design-system`
+ * route is registered only in development builds (`import.meta.env.DEV`), so
+ * it is not part of the public production site.
  */
 export function App(): JSX.Element {
   return (
@@ -32,6 +38,16 @@ export function App(): JSX.Element {
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/app/login" element={<LoginPage />} />
       <Route path="/app/select-tenant" element={<SelectTenantPage />} />
+      {import.meta.env.DEV && (
+        <Route
+          path="/design-system"
+          element={
+            <div className="p-4 sm:p-6 bg-background min-h-screen">
+              <DesignSystemShowcase />
+            </div>
+          }
+        />
+      )}
 
       <Route element={<ProtectedRoute />}>
         <Route path="/app" element={<AppShell />}>
@@ -42,6 +58,7 @@ export function App(): JSX.Element {
           <Route path="menu" element={<MenuPage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="orders/:id" element={<OrderDetailPage />} />
+          <Route path="design-system" element={<DesignSystemShowcase />} />
         </Route>
         {/* Outside AppShell (no nav/logout chrome) — a focused first-run
             screen, not a dashboard tab (task instruction section 13). */}

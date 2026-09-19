@@ -34,7 +34,7 @@ export function SetupPage(): JSX.Element {
   const hasAtLeastOneTable = (tablesQuery.data?.data.length ?? 0) > 0;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-secondary p-4">
+    <main className="flex min-h-screen items-center justify-center bg-surface-muted p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Let's get your restaurant ready</CardTitle>
