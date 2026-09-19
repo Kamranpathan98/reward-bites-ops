@@ -281,3 +281,14 @@ export type {
   DashboardQuery,
   DashboardBreakdownQuery,
 } from './dashboard';
+
+export {
+  organizationPaymentSettingsResponseSchema,
+  organizationSettingsResponseSchema,
+  patchOrganizationPaymentSettingsRequestSchema,
+} from './organization-settings';
+export type {
+  OrganizationPaymentSettings,
+  OrganizationSettingsResponse,
+  PatchOrganizationPaymentSettingsRequest,
+} from './organization-settings';

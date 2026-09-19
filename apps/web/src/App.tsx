@@ -14,6 +14,7 @@ import { SetupPage } from '@/routes/staff/setup';
 import { TablesPage } from '@/routes/staff/tables-page';
 import { TablesQrPage } from '@/routes/staff/tables-qr-page';
 import { UsersPage } from '@/routes/staff/users-page';
+import { OrganizationPaymentSettingsPage } from '@/routes/staff/organization-payment-settings';
 import { DesignSystemShowcase } from '@/routes/staff/design-system-showcase';
 import { LandingPage } from '@/routes/public/landing';
 import { SignupPage } from '@/routes/public/signup';
@@ -62,6 +63,7 @@ export function App(): JSX.Element {
           <Route index element={<DashboardPage />} />
           <Route path="expenses" element={<ExpensesPage />} />
           <Route path="settings/users" element={<UsersPage />} />
+          <Route path="settings/payments" element={<OrganizationPaymentSettingsPage />} />
           <Route path="tables" element={<TablesPage />} />
           <Route path="tables/qr" element={<TablesQrPage />} />
           <Route path="menu" element={<MenuPage />} />

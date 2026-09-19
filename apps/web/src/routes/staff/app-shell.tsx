@@ -14,6 +14,7 @@ const navItems = [
   { to: '/app/tables', label: 'Tables', permission: 'tables.read' as const },
   { to: '/app/menu', label: 'Menu', permission: 'menu.read' as const },
   { to: '/app/settings/users', label: 'Users', permission: 'users.read' as const },
+  { to: '/app/settings/payments', label: 'Payments', permission: 'settings.read' as const },
 ];
 
 export function AppShell(): JSX.Element {
