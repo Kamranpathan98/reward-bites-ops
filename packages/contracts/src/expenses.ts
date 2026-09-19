@@ -13,13 +13,7 @@ export const DEFAULT_EXPENSE_CATEGORIES = [
   { name: 'Miscellaneous Supplies', sortOrder: 9 },
 ] as const;
 
-export const expensePaymentMethodSchema = z.enum([
-  'CASH',
-  'UPI',
-  'BANK_TRANSFER',
-  'CARD',
-  'OTHER',
-]);
+export const expensePaymentMethodSchema = z.enum(['CASH', 'UPI', 'BANK_TRANSFER', 'CARD', 'OTHER']);
 export type ExpensePaymentMethod = z.infer<typeof expensePaymentMethodSchema>;
 
 export const expenseCategorySchema = z.object({
@@ -91,18 +85,26 @@ export const updateExpenseRequestSchema = z.object({
   expectedVersion: z.number().int().min(0),
   categoryId: z.string().uuid().optional(),
   amountPaise: positivePaiseSchema.optional(),
-  expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  expenseDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   description: z.string().trim().min(1).max(500).optional(),
   paymentMethod: expensePaymentMethodSchema.optional(),
 });
 export type UpdateExpenseRequest = z.infer<typeof updateExpenseRequestSchema>;
 
 export const listExpensesQuerySchema = z.object({
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   categoryId: z.string().uuid().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 export type ListExpensesQuery = z.infer<typeof listExpensesQuerySchema>;
-

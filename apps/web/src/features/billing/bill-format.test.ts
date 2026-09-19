@@ -29,7 +29,15 @@ describe('bill-format', () => {
     expect(rupeesToPaise('12')).toBe(1200);
     expect(rupeesToPaise('12.5')).toBe(1250);
     expect(rupeesToPaise(' 0.07 ')).toBe(7);
-    for (const bad of ['', '-1', '1.234', 'abc', '1,5', '.5', '1e3']) {
+    expect(rupeesToPaise('120')).toBe(12000);
+    expect(rupeesToPaise('120.50')).toBe(12050);
+    expect(rupeesToPaise('0')).toBe(0);
+    expect(rupeesToPaise('120.5')).toBe(12050);
+    expect(rupeesToPaise('₹120.50')).toBe(12050);
+    expect(rupeesToPaise('₹ 1,250.50')).toBe(125050);
+    expect(rupeesToPaise('1,250.50')).toBe(125050);
+    expect(rupeesToPaise('1250.50')).toBe(125050);
+    for (const bad of ['', '-1', '-10', '1.234', '12.345', '1.2.3', 'abc', '.5', '1e3']) {
       expect(rupeesToPaise(bad)).toBeNull();
     }
     expect(rupeesToPaise('99999999999999999999')).toBeNull();

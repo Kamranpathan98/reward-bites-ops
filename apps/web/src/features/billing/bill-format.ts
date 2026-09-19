@@ -11,9 +11,16 @@ export function formatBillNumber(billNumber: number | null): string {
   return billNumber === null ? 'Draft bill' : `Bill ${String(billNumber).padStart(4, '0')}`;
 }
 
-/** "12.5" -> 1250 paise; rejects negatives, more than 2 decimals and non-numbers. */
+/** "12.5" -> 1250 paise; rejects negatives, more than 2 decimals and non-numbers.
+ * Strips optional leading currency symbols (₹, INR) and comma grouping before parsing.
+ */
 export function rupeesToPaise(input: string): number | null {
-  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(input.trim());
+  const sanitized = input
+    .trim()
+    .replace(/^(₹|INR\s*)/i, '')
+    .trim()
+    .replace(/,/g, '');
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(sanitized);
   if (!match) return null;
   const whole = Number(match[1]);
   const fraction = Number((match[2] ?? '').padEnd(2, '0'));

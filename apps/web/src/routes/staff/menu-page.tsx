@@ -1,19 +1,27 @@
 import { useState } from 'react';
+import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
+import { formatPaise, rupeesToPaise } from '@/features/billing/bill-format';
 import {
-  createAddonRequestSchema,
   createCategoryRequestSchema,
   createItemRequestSchema,
-  createVariantRequestSchema,
-  type CreateAddonRequest,
   type CreateCategoryRequest,
   type CreateItemRequest,
-  type CreateVariantRequest,
   type MenuAddon,
   type MenuCategory,
   type MenuItem,
 } from '@rewardbite/contracts';
+
+const createVariantFormSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(100),
+});
+type CreateVariantFormData = z.infer<typeof createVariantFormSchema>;
+
+const createAddonFormSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(200),
+});
+type CreateAddonFormData = z.infer<typeof createAddonFormSchema>;
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,10 +51,6 @@ import {
 function describeError(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return 'Something went wrong. Please try again.';
-}
-
-function formatPaise(paise: number): string {
-  return `₹${(paise / 100).toFixed(2)}`;
 }
 
 export function MenuPage(): JSX.Element {
@@ -254,23 +258,32 @@ function ItemRow({
   const [error, setError] = useState<string | null>(null);
   const [showVariantForm, setShowVariantForm] = useState(false);
   const [showAddonPicker, setShowAddonPicker] = useState(false);
+  const [variantPrice, setVariantPrice] = useState('');
+  const [variantPriceError, setVariantPriceError] = useState<string | null>(null);
 
   const {
     register: registerVariant,
     handleSubmit: handleSubmitVariant,
     reset: resetVariant,
     formState: { errors: variantErrors },
-  } = useForm<CreateVariantRequest>({
-    resolver: zodResolver(createVariantRequestSchema),
-    defaultValues: { itemId: item.id },
+  } = useForm<CreateVariantFormData>({
+    resolver: zodResolver(createVariantFormSchema),
   });
 
   const onSubmitVariant = handleSubmitVariant((values) => {
+    setVariantPriceError(null);
+    const paise = rupeesToPaise(variantPrice);
+    if (paise === null || paise <= 0) {
+      setVariantPriceError('Enter a valid price, e.g. 120 or 120.50');
+      return;
+    }
     createVariant.mutate(
-      { ...values, itemId: item.id },
+      { name: values.name, itemId: item.id, pricePaise: paise },
       {
         onSuccess: () => {
-          resetVariant({ itemId: item.id, name: '', pricePaise: 0 });
+          resetVariant({ name: '' });
+          setVariantPrice('');
+          setVariantPriceError(null);
           setShowVariantForm(false);
         },
         onError: (err) => setError(describeError(err)),
@@ -356,7 +369,7 @@ function ItemRow({
         </div>
 
         {showVariantForm && (
-          <form className="mt-2 flex items-end gap-2" onSubmit={onSubmitVariant} noValidate>
+          <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={onSubmitVariant} noValidate>
             <div className="flex flex-col gap-1">
               <Label htmlFor={`variant-name-${item.id}`}>Variant name</Label>
               <Input id={`variant-name-${item.id}`} {...registerVariant('name')} />
@@ -365,12 +378,18 @@ function ItemRow({
               )}
             </div>
             <div className="flex flex-col gap-1">
-              <Label htmlFor={`variant-price-${item.id}`}>Price (paise)</Label>
+              <Label htmlFor={`variant-price-${item.id}`}>Price (₹)</Label>
               <Input
                 id={`variant-price-${item.id}`}
-                type="number"
-                {...registerVariant('pricePaise', { valueAsNumber: true })}
+                type="text"
+                inputMode="decimal"
+                placeholder="e.g. 80.00"
+                value={variantPrice}
+                onChange={(e) => setVariantPrice(e.target.value)}
               />
+              {variantPriceError && (
+                <p className="text-xs text-red-600">{variantPriceError}</p>
+              )}
             </div>
             <Button type="submit" size="sm" disabled={createVariant.isPending}>
               Add
@@ -462,6 +481,8 @@ function VariantRow({
 
 function CreateItemForm({ categoryId }: { categoryId: string }): JSX.Element {
   const createItem = useCreateItem();
+  const [basePrice, setBasePrice] = useState('');
+  const [priceError, setPriceError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -473,9 +494,25 @@ function CreateItemForm({ categoryId }: { categoryId: string }): JSX.Element {
   });
 
   const onSubmit = handleSubmit((values) => {
+    setPriceError(null);
+    let basePricePaise: number | undefined;
+    if (basePrice.trim() !== '') {
+      const paise = rupeesToPaise(basePrice);
+      if (paise === null) {
+        setPriceError('Enter a valid price, e.g. 120 or 120.50');
+        return;
+      }
+      basePricePaise = paise;
+    }
     createItem.mutate(
-      { ...values, categoryId },
-      { onSuccess: () => reset({ categoryId, name: '', basePricePaise: undefined }) },
+      { ...values, categoryId, basePricePaise },
+      {
+        onSuccess: () => {
+          reset({ categoryId, name: '', basePricePaise: undefined });
+          setBasePrice('');
+          setPriceError(null);
+        },
+      },
     );
   });
 
@@ -495,17 +532,26 @@ function CreateItemForm({ categoryId }: { categoryId: string }): JSX.Element {
         {errors.name && <p className="text-xs text-red-600">{errors.name.message}</p>}
       </div>
       <div className="flex flex-col gap-1">
-        <Label htmlFor={`item-price-${categoryId}`}>Base price (paise)</Label>
+        <Label htmlFor={`item-price-${categoryId}`}>Base price (₹)</Label>
         <Input
           id={`item-price-${categoryId}`}
-          type="number"
-          {...register('basePricePaise', { valueAsNumber: true })}
+          type="text"
+          inputMode="decimal"
+          placeholder="e.g. 120.00"
+          value={basePrice}
+          onChange={(e) => setBasePrice(e.target.value)}
         />
+        {priceError && <p className="text-xs text-red-600">{priceError}</p>}
         <p className="text-xs text-muted-foreground">Leave blank for a variant-only item.</p>
       </div>
       <div className="flex flex-col gap-1">
         <Label htmlFor={`item-veg-${categoryId}`}>Veg flag</Label>
-        <Select id={`item-veg-${categoryId}`} {...register('vegFlag')}>
+        <Select
+          id={`item-veg-${categoryId}`}
+          {...register('vegFlag', {
+            setValueAs: (v: string) => (v === '' ? undefined : v),
+          })}
+        >
           <option value="">—</option>
           <option value="VEG">Veg</option>
           <option value="NON_VEG">Non-veg</option>
@@ -534,13 +580,21 @@ function AddonRow({
   const patchAddon = usePatchAddon();
   const deleteAddon = useDeleteAddon();
   const [isEditing, setIsEditing] = useState(false);
-  const { register, handleSubmit, reset } = useForm<{ name: string; pricePaise: number }>({
-    defaultValues: { name: addon.name, pricePaise: addon.pricePaise },
+  const [editPrice, setEditPrice] = useState((addon.pricePaise / 100).toFixed(2));
+  const [editPriceError, setEditPriceError] = useState<string | null>(null);
+  const { register, handleSubmit, reset } = useForm<{ name: string }>({
+    defaultValues: { name: addon.name },
   });
 
   const onSubmit = handleSubmit((values) => {
+    setEditPriceError(null);
+    const paise = rupeesToPaise(editPrice);
+    if (paise === null || paise <= 0) {
+      setEditPriceError('Enter a valid price, e.g. 120 or 120.50');
+      return;
+    }
     patchAddon.mutate(
-      { id: addon.id, ...values },
+      { id: addon.id, name: values.name, pricePaise: paise },
       {
         onSuccess: () => setIsEditing(false),
         onError: (err) => onError(describeError(err)),
@@ -550,14 +604,19 @@ function AddonRow({
 
   if (isEditing) {
     return (
-      <form className="flex items-end gap-2 text-sm" onSubmit={onSubmit} noValidate>
+      <form className="flex flex-wrap items-end gap-2 text-sm" onSubmit={onSubmit} noValidate>
         <Input className="w-40" {...register('name')} aria-label="Add-on name" />
-        <Input
-          className="w-28"
-          type="number"
-          {...register('pricePaise', { valueAsNumber: true })}
-          aria-label="Add-on price in paise"
-        />
+        <div className="flex flex-col gap-1">
+          <Input
+            className="w-28"
+            type="text"
+            inputMode="decimal"
+            value={editPrice}
+            onChange={(e) => setEditPrice(e.target.value)}
+            aria-label="Add-on price in rupees"
+          />
+          {editPriceError && <p className="text-xs text-red-600">{editPriceError}</p>}
+        </div>
         <Button type="submit" size="sm" disabled={patchAddon.isPending}>
           Save
         </Button>
@@ -566,7 +625,9 @@ function AddonRow({
           size="sm"
           variant="outline"
           onClick={() => {
-            reset({ name: addon.name, pricePaise: addon.pricePaise });
+            reset({ name: addon.name });
+            setEditPrice((addon.pricePaise / 100).toFixed(2));
+            setEditPriceError(null);
             setIsEditing(false);
           }}
         >
@@ -605,15 +666,32 @@ function AddonRow({
 function AddonCatalogCard({ addons }: { addons: MenuAddon[] }): JSX.Element {
   const createAddon = useCreateAddon();
   const [error, setError] = useState<string | null>(null);
+  const [addonPrice, setAddonPrice] = useState('');
+  const [addonPriceError, setAddonPriceError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
     reset,
     formState: { errors },
-  } = useForm<CreateAddonRequest>({ resolver: zodResolver(createAddonRequestSchema) });
+  } = useForm<CreateAddonFormData>({ resolver: zodResolver(createAddonFormSchema) });
 
   const onSubmit = handleSubmit((values) => {
-    createAddon.mutate(values, { onSuccess: () => reset() });
+    setAddonPriceError(null);
+    const paise = rupeesToPaise(addonPrice);
+    if (paise === null || paise <= 0) {
+      setAddonPriceError('Enter a valid price, e.g. 30 or 30.50');
+      return;
+    }
+    createAddon.mutate(
+      { ...values, pricePaise: paise },
+      {
+        onSuccess: () => {
+          reset();
+          setAddonPrice('');
+          setAddonPriceError(null);
+        },
+      },
+    );
   });
 
   return (
@@ -634,7 +712,7 @@ function AddonCatalogCard({ addons }: { addons: MenuAddon[] }): JSX.Element {
         )}
 
         <form
-          className="flex items-end gap-3 border-t border-border pt-3"
+          className="flex flex-wrap items-end gap-3 border-t border-border pt-3"
           onSubmit={onSubmit}
           noValidate
         >
@@ -644,12 +722,16 @@ function AddonCatalogCard({ addons }: { addons: MenuAddon[] }): JSX.Element {
             {errors.name && <p className="text-xs text-red-600">{errors.name.message}</p>}
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="addon-price">Price (paise)</Label>
+            <Label htmlFor="addon-price">Price (₹)</Label>
             <Input
               id="addon-price"
-              type="number"
-              {...register('pricePaise', { valueAsNumber: true })}
+              type="text"
+              inputMode="decimal"
+              placeholder="e.g. 30.00"
+              value={addonPrice}
+              onChange={(e) => setAddonPrice(e.target.value)}
             />
+            {addonPriceError && <p className="text-xs text-red-600">{addonPriceError}</p>}
           </div>
           <Button type="submit" size="sm" disabled={createAddon.isPending}>
             {createAddon.isPending ? 'Adding…' : 'Add add-on'}
